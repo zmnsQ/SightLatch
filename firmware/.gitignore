@@ -1,0 +1,4 @@
+IPhoneHIDBridge/config.h
+build/
+*.bin
+*.elf

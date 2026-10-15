@@ -1,0 +1,15 @@
+2026-10-15T09:57:30Z
+test_all_swift_files_are_referenced (__main__.SourceContracts.test_all_swift_files_are_referenced) ... ok
+test_broadcast_end_revokes_both_modes (__main__.SourceContracts.test_broadcast_end_revokes_both_modes) ... ok
+test_command_mutation_uses_cross_process_lock (__main__.SourceContracts.test_command_mutation_uses_cross_process_lock) ... ok
+test_local_secrets_are_ignored (__main__.SourceContracts.test_local_secrets_are_ignored) ... ok
+test_persistence_failures_are_not_success (__main__.SourceContracts.test_persistence_failures_are_not_success) ... ok
+test_plists_parse_and_local_network_policy (__main__.SourceContracts.test_plists_parse_and_local_network_policy) ... ok
+test_provider_and_settings_fail_closed (__main__.SourceContracts.test_provider_and_settings_fail_closed) ... ok
+test_stop_has_confirmed_and_uncertain_paths (__main__.SourceContracts.test_stop_has_confirmed_and_uncertain_paths) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.004s
+
+OK
+PASS: all 256 input bytes, ASCII mappings, deadline and millis wraparound

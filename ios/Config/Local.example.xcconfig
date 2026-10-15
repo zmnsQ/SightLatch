@@ -1,0 +1,6 @@
+// Copy to Local.xcconfig and fill your own registered identifiers locally.
+// Never commit Local.xcconfig or certificates/provisioning profiles.
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
+PILOT_BUNDLE_PREFIX = com.yourcompany.HIDPilot
+PILOT_APP_GROUP = group.com.yourcompany.HIDPilot
+PILOT_KEYCHAIN_GROUP = $(AppIdentifierPrefix)com.yourcompany.HIDPilot.shared

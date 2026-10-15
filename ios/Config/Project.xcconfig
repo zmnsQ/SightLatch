@@ -1,0 +1,13 @@
+// Replace these identifiers with your own registered identifiers before signing.
+PILOT_BUNDLE_PREFIX = com.example.HIDPilot
+PILOT_APP_GROUP = group.com.example.HIDPilot
+PILOT_KEYCHAIN_GROUP = $(AppIdentifierPrefix)com.example.HIDPilot.shared
+SWIFT_VERSION = 5.0
+IPHONEOS_DEPLOYMENT_TARGET = 18.0
+TARGETED_DEVICE_FAMILY = 1
+CODE_SIGN_STYLE = Automatic
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1
+
+// Optional local signing overrides are ignored by Git and survive source updates.
+#include? "Local.xcconfig"
