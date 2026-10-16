@@ -34,7 +34,7 @@
 		<true/>
 	</dict>
 	<key>CFBundleDisplayName</key>
-	<string>HIDPilot</string>
+	<string>SightLatch</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UILaunchScreen</key>

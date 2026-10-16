@@ -60,7 +60,7 @@ struct OnboardingView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     Label("让操作始终可控", systemImage: "hand.raised.fill").font(.title2.bold())
-                    Text("HIDPilot 使用你主动开始的系统广播观察屏幕，并通过你的ESP32蓝牙鼠标逐步操作这台iPhone。默认不自动点击；模型无法替你保证安全。")
+                    Text("SightLatch 使用你主动开始的系统广播观察屏幕，并通过你的ESP32蓝牙鼠标逐步操作这台iPhone。默认不自动点击；模型无法替你保证安全。")
                     Text("先准备：ESP32刷入固件 → 同一可信Wi-Fi → 系统蓝牙配对 → 必要时辅助触控 → 设置视觉模型 → 校准指针 → 按硬件ARM。")
                     ForEach(model.readiness()) { item in
                         HStack(alignment: .top, spacing: 12) {

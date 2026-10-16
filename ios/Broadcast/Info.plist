@@ -34,7 +34,7 @@
 		<true/>
 	</dict>
 	<key>CFBundleDisplayName</key>
-	<string>HIDPilot Broadcast</string>
+	<string>SightLatch Broadcast</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionPointIdentifier</key>

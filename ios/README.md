@@ -1,4 +1,4 @@
-# HIDPilot iOS 源码原型
+# SightLatch iOS 源码原型
 
 **状态：这是功能流程继续完善后的开发源码版本。iOS App仍未完成Apple SDK编译、签名安装或真机运行验证；Linux实际检查与xtool尝试请看根目录验证报告。不能把Linux工具能运行、源码解析或工程引用检查当作iOS构建成功。未使用用户电脑或手机。**
 

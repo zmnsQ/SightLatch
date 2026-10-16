@@ -61,7 +61,7 @@ struct HomeView: View {
                     }.padding(24)
                 }
             }
-            .navigationTitle("HIDPilot").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("SightLatch").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarLeading) { Button("工作区", systemImage: "square.grid.2x2") { showWorkspace = true } }; ToolbarItem(placement: .topBarTrailing) { Button("设置", systemImage: "slider.horizontal.3") { showSettings = true } } }
             .safeAreaInset(edge: .bottom) {
                 HStack(spacing: 18) {
@@ -93,7 +93,7 @@ struct BroadcastPicker: UIViewRepresentable {
         picker.preferredExtension = Bundle.main.bundleIdentifier.map { $0 + ".Broadcast" }
         picker.showsMicrophoneButton = false
         picker.accessibilityLabel = "系统屏幕广播按钮"
-        picker.accessibilityHint = "选择HIDPilot Broadcast后，由系统确认开始屏幕广播"
+        picker.accessibilityHint = "选择SightLatch Broadcast后，由系统确认开始屏幕广播"
         return picker
     }
     func updateUIView(_ uiView: RPSystemBroadcastPickerView, context: Context) {}

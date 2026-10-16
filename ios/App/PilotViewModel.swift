@@ -138,7 +138,7 @@ final class PilotViewModel: ObservableObject {
             try recordSession(command)
             lastDeviceStatus = device
             prepared = true
-            notice = "会话已准备。请点系统广播按钮，选择 HIDPilot Broadcast。广播会持续上传屏幕直到你停止。"
+            notice = "会话已准备。请点系统广播按钮，选择 SightLatch Broadcast。广播会持续上传屏幕直到你停止。"
             if ActivityAuthorizationInfo().areActivitiesEnabled {
                 let initial = PilotActivityAttributes.ContentState(phase: "待广播", steps: 0, updatedAt: Date())
                 activity = try? Activity.request(attributes: PilotActivityAttributes(sessionID: command.id), content: ActivityContent(state: initial, staleDate: Date().addingTimeInterval(15)), pushType: nil)

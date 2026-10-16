@@ -25,7 +25,7 @@ final class ContinuedSession {
         guard accepted else { throw PilotError.message("系统未注册后台会话，请使用默认扩展模式或检查签名/配置") }
         schedulerID = identifier
         activeSessionID = command.id
-        let request = BGContinuedProcessingTaskRequest(identifier: identifier, title: "HIDPilot有限操作会话", subtitle: "等待你开始系统广播")
+        let request = BGContinuedProcessingTaskRequest(identifier: identifier, title: "SightLatch有限操作会话", subtitle: "等待你开始系统广播")
         request.strategy = .fail
         do { try BGTaskScheduler.shared.submit(request) }
         catch {
@@ -184,7 +184,7 @@ final class ContinuedSession {
     private func publish(_ phase: String, _ detail: String, steps: Int, sessionID: String, systemTask: BGContinuedProcessingTask) async {
         guard SharedStore.shared.command?.id == sessionID else { return }
         try? SharedStore.shared.write(PilotStatus(phase: phase, detail: detail, steps: steps, sessionID: sessionID), to: "status.json")
-        systemTask.updateTitle("HIDPilot · \(phase)", subtitle: "\(steps)步 · 五分钟有界会话")
+        systemTask.updateTitle("SightLatch · \(phase)", subtitle: "\(steps)步 · 五分钟有界会话")
         for activity in Activity<PilotActivityAttributes>.activities where activity.attributes.sessionID == sessionID {
             await activity.update(ActivityContent(state: .init(phase: phase, steps: steps, updatedAt: Date()), staleDate: Date().addingTimeInterval(15)))
         }

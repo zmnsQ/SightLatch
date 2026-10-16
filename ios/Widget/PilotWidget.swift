@@ -13,7 +13,7 @@ struct PilotLiveActivity: Widget {
             HStack(spacing: 12) {
                 Image(systemName: "cursorarrow.motionlines").font(.title2).foregroundStyle(.teal)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("HIDPilot · \(context.state.phase)").font(.headline)
+                    Text("SightLatch · \(context.state.phase)").font(.headline)
                     Text("\(context.state.steps) 步 · 最后更新 \(context.state.updatedAt.formatted(date: .omitted, time: .standard))").font(.caption)
                     Text(context.isStale ? "状态已过期，点刷新读取最新快照" : "状态可能延迟；物理急停始终优先").font(.caption2)
                     HStack {
@@ -25,7 +25,7 @@ struct PilotLiveActivity: Widget {
             }.padding().activityBackgroundTint(.black.opacity(0.85)).activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
             DynamicIsland {
-                DynamicIslandExpandedRegion(.leading) { Label("HIDPilot", systemImage: "cursorarrow.motionlines") }
+                DynamicIslandExpandedRegion(.leading) { Label("SightLatch", systemImage: "cursorarrow.motionlines") }
                 DynamicIslandExpandedRegion(.trailing) { Text("\(context.state.steps) 步") }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack {
