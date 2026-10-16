@@ -22,7 +22,7 @@ struct HomeView: View {
                             Text("\(model.status.steps) 步").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                         }
                         VStack(alignment: .leading, spacing: 12) {
-                            Image(systemName: "cursorarrow.motionlines").font(.system(size: 32, weight: .light)).foregroundStyle(.teal)
+                            Image("BrandMark").resizable().scaledToFit().frame(width: 56, height: 56).accessibilityHidden(true)
                             Text("你想完成什么？").font(.largeTitle.bold())
                             Text("把目标交给 AI，让真实的屏幕与指针一步步协作。")
                                 .font(.subheadline).foregroundStyle(.secondary)

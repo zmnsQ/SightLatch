@@ -1,3 +1,5 @@
+![SightLatch — screen perception to hardware action](assets/brand/readme-hero.svg)
+
 # SightLatch
 
 ### See the screen. Plan one step. Act through hardware.
@@ -7,6 +9,8 @@ An experimental native iOS agent that connects ReplayKit screen capture, vision-
 [简体中文](README.zh-CN.md) · [Getting started](docs/GETTING_STARTED.md) · [Architecture](docs/ARCHITECTURE.md) · [Validation](docs/TESTING.md)
 
 > **Development status:** source available for integration and testing. Linux source-contract checks and shared C++ primitive tests have passed. Native iOS builds, complete firmware builds, and the same-iPhone end-to-end loop have not been validated. No signed application or production-ready release is provided.
+
+[首次安装与使用（中文）](docs/FIRST_RUN.zh-CN.md)
 
 ## Why SightLatch?
 
@@ -72,3 +76,7 @@ When reporting a problem, include OS/toolchain/board versions, the first relevan
 ## License and dependencies
 
 A project license has not yet been selected. Public source visibility does not itself grant an open-source license. Third-party frameworks and dependencies retain their respective licenses; consult the platform and firmware documentation before redistribution.
+
+## Brand assets
+
+[SVG / PNG / iOS app icon](assets/brand/README.md) · [Visual preview](assets/brand/brand-preview.png)

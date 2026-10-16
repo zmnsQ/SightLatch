@@ -1,3 +1,5 @@
+![SightLatch — screen perception to hardware action](assets/brand/readme-hero.svg)
+
 # SightLatch
 
 ### 让手机看见屏幕，通过硬件完成下一步操作。
@@ -7,6 +9,8 @@ SightLatch 是一个原生 iOS AI 操作实验项目，将 ReplayKit 读屏、�
 [English](README.md) · [开始使用](docs/GETTING_STARTED.md) · [架构说明](docs/ARCHITECTURE.md) · [验证状态](docs/TESTING.md)
 
 > **当前状态：开发中，提供可检查和集成的源码。** 已有 Linux 源码契约检查及共享 C++ 逻辑测试结果；iOS 原生编译、完整固件编译、同一部 iPhone 上的读屏与 HID 闭环仍需验证。暂无已签名安装包，不宣称生产可用。
+
+[首次安装与使用（中文）](docs/FIRST_RUN.zh-CN.md)
 
 ## 核心能力
 
@@ -58,3 +62,7 @@ SightLatch 是一个原生 iOS AI 操作实验项目，将 ReplayKit 读屏、�
 ## 许可
 
 项目尚未选定许可证。仓库公开不等于自动授予开源许可；系统框架与第三方依赖遵循各自许可证，分发时需另行核对。
+
+## 品牌资源
+
+[SVG / PNG / iOS app icon](assets/brand/README.md) · [Visual preview](assets/brand/brand-preview.png)

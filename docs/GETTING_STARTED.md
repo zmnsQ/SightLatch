@@ -1,5 +1,7 @@
 # Getting started / 开始使用
 
+中文完整上手指引：[第一次安装与使用](FIRST_RUN.zh-CN.md)。
+
 ## Prerequisites
 
 - iPhone with iOS 26 and a compatible Xcode toolchain on a Mac for signing and installation.

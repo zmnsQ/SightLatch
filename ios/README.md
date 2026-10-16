@@ -26,11 +26,11 @@
 - HIDPilotBroadcast：ReplayKit Broadcast Upload Extension，`RPBroadcastSampleHandler` 处理视频帧，不处理音频。
 - HIDPilotWidget：WidgetKit Live Activity / Dynamic Island 展示。
 
-使用 Xcode 26 或更新的兼容 Xcode / iOS SDK（源码调用 iOS 26 glassEffect，需要对应SDK才能编译）。部署下限18.0是为了可用性降级，不表示已验证18或26.5.2；代码不依赖任何iOS27功能。目标设备为iPhone。没有第三方Swift依赖、没有复制无许可证仓库源码。没有预置App图标或上架素材。
+使用 Xcode 26 或更新的兼容 Xcode / iOS SDK（源码调用 iOS 26 glassEffect，需要对应SDK才能编译）。部署下限18.0是为了可用性降级，不表示已验证18或26.5.2；代码不依赖任何iOS27功能。目标设备为iPhone。没有第三方Swift依赖、没有复制无许可证仓库源码。已包含原创 AppIcon 与深浅色品牌标记；尚未提供 App Store 上架素材。
 
 ### 签名需要你修改
 
-1. 在 `Config/Project.xcconfig` 把 `PILOT_BUNDLE_PREFIX` 改成你拥有的唯一前缀，比如 `com.yourcompany.HIDPilot`，并修改 `PILOT_APP_GROUP`。
+1. 在本地 `Config/Local.xcconfig` 把 `PILOT_BUNDLE_PREFIX` 改成你拥有的唯一前缀，比如 `com.yourcompany.HIDPilot`，并修改 `PILOT_APP_GROUP`。
 2. 同步修改 `PILOT_KEYCHAIN_GROUP` 的后缀，保留 `$(AppIdentifierPrefix)`；前缀并不一定总等于Team ID，请以签名配置为准。
 3. 在三个target选择同一开发者Team。App Group在开发者后台及三个target启用相同值。主App与Broadcast必须启用同一个Keychain access group；Widget不读取密钥。
 4. 确认生成的 entitlements/provisioning profile 确实包含这些组。个人免费签名可能不满足这些能力；能否使用需以你的开发者账号和Xcode实际结果为准。
@@ -47,7 +47,7 @@
 5. 阅读屏幕上传说明并明确同意。未配置/未同意不会运行AI；没有伪造“端侧大模型”。ChatGPT等产品订阅和API额度不能混为一谈。
 6. 停止自动会话后，物理ARM，再打开“指针实验台”。先用上下左右100单位移动，观察方向/距离；可记录每100单位像素估计。点击、滚动、Esc、ASCII输入按钮会发真实HID操作，仅在安全页面试。AI不使用这组数字伪装精确绝对坐标。
 7. 填一个无风险导航任务。初次建议保持谨慎模式：仅自动相对移动/滚动。需自动普通导航点击/搜索框ASCII输入时，另外明确启用“低风险导航”。
-8. 物理ARM，点击“准备会话”，再点中间系统广播按钮，手动选HIDPilot Broadcast并开始广播。返回目标App。扩展会延迟数秒等新帧。
+8. 物理ARM，点击“准备会话”，再点中间系统广播按钮，手动选SightLatch Broadcast并开始广播。返回目标App。扩展会延迟数秒等新帧。
 9. 观察日志：观察→思考→执行→新帧观察；截图不可定位指针/模型不确定/画面变化/超时/错误都暂停。**系统指针是否出现在ReplayKit截图中没有保证，这可能让本版本无法自动移动或点击，需要你实际确认。**
 10. 先验证物理急停；再验证App停止按钮、系统停止广播、网络中断、AI错误、锁屏/广播暂停、硬件重启/断连和最大步数。严禁用交易、外部通讯、密码或敏感表单作测试场景。
 
