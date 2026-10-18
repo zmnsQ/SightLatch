@@ -14,6 +14,7 @@ final class Transport {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 12
         config.timeoutIntervalForResource = 15
+        config.waitsForConnectivity = false // Fail promptly; never wait indefinitely for a Wi-Fi change.
         config.httpCookieStorage = nil
         config.urlCache = nil
         return URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
@@ -22,20 +23,82 @@ final class Transport {
         let (bytes, response) = try await session.bytes(for: request)
         defer { bytes.task.cancel() }
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            throw PilotError.message("网络请求失败，HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+            throw HTTPStatusFailure(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0)
         }
-        var data = Data()
-        for try await byte in bytes {
-            guard data.count < 1_000_000 else { throw PilotError.message("响应过大，已中止读取") }
-            data.append(byte)
-        }
-        return data
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            var data = Data()
+            for try await byte in bytes {
+                try Task.checkCancellation()
+                guard data.count < 1_000_000 else { throw PilotError.message("响应过大，已中止读取") }
+                data.append(byte)
+            }
+            return data
+        } onCancel: { bytes.task.cancel() }
     }
+}
+
+// Structured, credential-free feedback shared by the settings and onboarding UI.
+struct HTTPStatusFailure: LocalizedError {
+    let statusCode: Int
+    var errorDescription: String? { "网络请求失败，HTTP \(statusCode)" }
+}
+enum DeviceProbeFailure: Error, LocalizedError, Equatable {
+    case http(Int), timeout, network, permission, transportSecurity, credentials, save, invalidResponse, cancelled
+    var errorDescription: String? {
+        switch self {
+        case .http(401): return "HTTP 401：设备拒绝认证。请核对当前设备地址与已保存的控制 Token；无需重刷固件。"
+        case .http(403): return "HTTP 403：设备拒绝访问。请核对设备访问权限。"
+        case .http(let code): return "设备检查失败：HTTP \(code)。可以重试。"
+        case .timeout: return "网络超时：设备未在限时内响应。请确认同一局域网后重试。"
+        case .permission: return "局域网访问被系统阻止。请在系统设置中允许 SightLatch 访问局域网后重试。"
+        case .transportSecurity: return "系统阻止了本地 HTTP 连接（ATS）。请使用修复后的 App 版本。"
+        case .credentials: return "无法读取共享控制凭据。请检查 App 签名 / Keychain 权限及设备是否已解锁，然后重试保存。"
+        case .save: return "保存失败，尚未发起设备检查。请重试；若持续失败，请检查 App Group / Keychain 签名配置。"
+        case .invalidResponse: return "设备已响应，但状态格式不符合协议。请确认地址指向 SightLatch 设备。"
+        case .cancelled: return "检查已取消，可以重试。"
+        case .network: return "网络不可达。请检查 Wi-Fi、设备地址和系统局域网权限后重试；BLE 状态仍未知。"
+        }
+    }
+    static func classify(_ error: Error) -> Self {
+        if let known = error as? Self { return known }
+        if let http = error as? HTTPStatusFailure { return .http(http.statusCode) }
+        if error is CancellationError { return .cancelled }
+        if error is DecodingError { return .invalidResponse }
+        if let url = error as? URLError {
+            switch url.code {
+            case .timedOut: return .timeout
+            case .appTransportSecurityRequiresSecureConnection: return .transportSecurity
+            case .cancelled: return .cancelled
+            case .dataNotAllowed: return .permission
+            default: return .network // iOS may also report permission denial as network failure.
+            }
+        }
+        return .network
+    }
+}
+struct DeviceProbeState: Equatable {
+    enum Phase { case idle, saving, checking, success, failure }
+    var phase: Phase
+    var message: String
+    var failure: DeviceProbeFailure? = nil
+    static let idle = Self(phase: .idle, message: "尚未检查设备。通过 Wi-Fi 读取设备报告的 BLE 状态。")
+}
+
+struct DevicePairingState: Equatable {
+    enum Phase { case idle, opening, waiting, connected, expired, error, cancelled }
+    var phase: Phase
+    var message: String
+    var deadline: Date? = nil
+    var remainingSeconds: Int { max(0, Int(ceil(deadline?.timeIntervalSinceNow ?? 0))) }
+    static let idle = Self(phase: .idle, message: "尚未开始配对。")
 }
 
 enum AddressPolicy {
     static func device(_ string: String) throws -> URL {
-        guard let url = URL(string: string), url.scheme == "http", let host = url.host?.lowercased(),
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = trimmed.contains("://") ? trimmed : "http://" + trimmed
+        guard let url = URL(string: normalized), url.scheme == "http", let host = url.host?.lowercased(),
               url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
               url.path.isEmpty || url.path == "/" else { throw PilotError.message("ESP32 地址应是本地 HTTP 主机，不包含路径或凭据。") }
         let components = host.split(separator: ".", omittingEmptySubsequences: false)
@@ -77,6 +140,10 @@ struct DeviceStatus: Decodable {
     var uptime_ms: UInt64
     var armed: Bool
     var hid_connected: Bool
+    var ble_connected: Bool?
+    var pairing_open: Bool?
+    var accessory_setup_service_uuid: String?
+    var accessorySetupServiceUUID: String? { accessory_setup_service_uuid }
     var session_id: String
     var next_sequence: Int
     var busy: Bool
@@ -87,8 +154,49 @@ struct DeviceStatus: Decodable {
     var control_mode: String?
     var firmware_version: String?
     var control_epoch: String?
+    var control_lease_mode: String?
+    var lease_remaining_ms: Int?
+    // Optional firmware 0.2.1 diagnostics; older firmware remains decodable.
+    var reset_reason: Int?
+    var auth_events: UInt32?
+    var auth_rejects: UInt32?
+    var disconnect_events: UInt32?
+    var last_disconnect_reason: Int?
+    var last_encryption_status: Int?
+    var notify_events: UInt32?
+    var notify_errors: UInt32?
+    var last_notify_code: Int?
+    var free_heap_bytes: UInt32?
+    var min_free_heap_bytes: UInt32?
+    var safety_stack_free_bytes: UInt32?
     var supportsSoftwareControl: Bool { control_mode == "software" }
+
+    // Explicit allowlist: never serialize DeviceStatus wholesale or include last_error,
+    // action/session IDs, endpoint, credentials, logs, screen bytes or arbitrary strings.
+    var redactedDiagnosticFields: [String: Any] {
+        var fields: [String: Any] = ["uptime_ms": uptime_ms,
+            "hid_connected": hid_connected, "armed": armed]
+        if boot_id.count == 32 && boot_id.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) || (65...70).contains($0) }) {
+            fields["boot_id"] = boot_id
+        }
+        fields["reset_reason"] = reset_reason
+        fields["auth_events"] = auth_events
+        fields["auth_rejects"] = auth_rejects
+        fields["disconnect_events"] = disconnect_events
+        fields["last_disconnect_reason"] = last_disconnect_reason
+        fields["last_encryption_status"] = last_encryption_status
+        fields["notify_events"] = notify_events
+        fields["notify_errors"] = notify_errors
+        fields["last_notify_code"] = last_notify_code
+        fields["free_heap_bytes"] = free_heap_bytes
+        fields["min_free_heap_bytes"] = min_free_heap_bytes
+        fields["safety_stack_free_bytes"] = safety_stack_free_bytes
+        return fields
+    }
 }
+
+enum DevicePairingCloseResult { case closed, unsupported, changed }
+struct DevicePairingReceipt: Decodable { var ok: Bool; var pairing_open: Bool; var boot_id: String; var control_epoch: String }
 
 struct HardwareClient {
     let configuration: PilotConfiguration
@@ -97,7 +205,10 @@ struct HardwareClient {
         var request = URLRequest(url: base.appendingPathComponent(path))
         request.httpMethod = method
         request.timeoutInterval = 3
-        request.setValue("Bearer \(try SecretStore.load(configuration.deviceAccount))", forHTTPHeaderField: "Authorization")
+        let token: String
+        do { token = try SecretStore.load(configuration.deviceAccount) }
+        catch { throw DeviceProbeFailure.credentials }
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
         return request
@@ -108,31 +219,57 @@ struct HardwareClient {
         guard status.ok else { throw PilotError.message("硬件状态响应未确认成功") }
         return status
     }
-    private func controlRequestBody(expected: DeviceStatus) throws -> Data {
+    private func controlRequestBody(expected: DeviceStatus, mode: String? = nil) throws -> Data {
         guard expected.supportsSoftwareControl, !expected.boot_id.isEmpty,
               let epoch = expected.control_epoch, epoch.count == 32,
               epoch.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) || (65...70).contains($0) }) else {
             throw PilotError.message("固件缺少安全控制代号，请更新固件后重新检查设备；不会发送授权请求。")
         }
-        struct ControlRequest: Encodable { var boot_id: String; var control_epoch: String }
-        return try JSONEncoder().encode(ControlRequest(boot_id: expected.boot_id, control_epoch: epoch))
+        struct ControlRequest: Encodable { var boot_id: String; var control_epoch: String; var mode: String? }
+        return try JSONEncoder().encode(ControlRequest(boot_id: expected.boot_id, control_epoch: epoch, mode: mode))
     }
-    func beginPairing(expected: DeviceStatus) async throws {
+    @discardableResult
+    func beginPairing(expected: DeviceStatus) async throws -> DevicePairingReceipt {
         let body = try controlRequestBody(expected: expected)
         let data = try await Transport.shared.send(request("v1/pair", method: "POST", body: body))
-        struct PairingReply: Decodable { var ok: Bool; var pairing_open: Bool; var boot_id: String; var control_epoch: String }
-        let reply = try JSONDecoder().decode(PairingReply.self, from: data)
+        let reply = try JSONDecoder().decode(DevicePairingReceipt.self, from: data)
         guard reply.ok, reply.pairing_open, reply.boot_id == expected.boot_id, reply.control_epoch.count == 32 else {
             throw PilotError.message("设备未确认打开配对窗口或已重启；不自动重试。")
         }
+        return reply
     }
-    func armSoftwareControl(expected: DeviceStatus) async throws -> DeviceStatus {
-        let body = try controlRequestBody(expected: expected)
+    // Atomic cancellation is optional in older firmware. Never fall back to unconditional
+    // STOP: that could disarm a newer session belonging to another controller.
+    @MainActor
+    func closePairingWindow(expected: DevicePairingReceipt, stillOwned: @MainActor () -> Bool) async throws -> DevicePairingCloseResult {
+        guard stillOwned() else { return .changed }
+        struct Cancellation: Encodable { let boot_id: String; let control_epoch: String }
+        let body = try JSONEncoder().encode(Cancellation(boot_id: expected.boot_id, control_epoch: expected.control_epoch))
+        do {
+            let data = try await Transport.shared.send(request("v1/cancel_pairing", method: "POST", body: body))
+            let reply = try JSONDecoder().decode(DevicePairingReceipt.self, from: data)
+            guard reply.ok, !reply.pairing_open, reply.boot_id == expected.boot_id, reply.control_epoch.count == 32 else {
+                throw PilotError.message("未确认配对窗口关闭，请等待窗口自动到期。")
+            }
+            return .closed
+        } catch let error as HTTPStatusFailure {
+            if error.statusCode == 404 || error.statusCode == 405 { return .unsupported }
+            if error.statusCode == 409 { return .changed }
+            throw error
+        }
+    }
+    func armSoftwareControl(expected: DeviceStatus, mode: String? = nil) async throws -> DeviceStatus {
+        guard mode == nil || mode == "calibration" else { throw PilotError.message("控制授权模式无效") }
+        let body = try controlRequestBody(expected: expected, mode: mode)
         let data = try await Transport.shared.send(request("v1/arm", method: "POST", body: body))
         let reply = try JSONDecoder().decode(DeviceStatus.self, from: data)
         guard reply.ok, reply.supportsSoftwareControl, reply.armed, reply.hid_connected,
               reply.boot_id == expected.boot_id, reply.control_epoch == expected.control_epoch,
               !reply.session_id.isEmpty else { throw PilotError.message("设备未确认控制授权；不自动重试。") }
+        if mode == "calibration" {
+            guard reply.control_lease_mode == "calibration", let remaining = reply.lease_remaining_ms,
+                  remaining > 0, remaining <= 60_000 else { throw PilotError.message("固件未确认60秒专用校准授权，请升级固件。") }
+        }
         return reply
     }
     // No retry of a side-effecting request. Firmware acknowledgment is not UI success.

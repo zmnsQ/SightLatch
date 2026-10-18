@@ -30,6 +30,7 @@ using hidpilot::asciiKey;
 #error "Supported targets: ESP32-C3 / ESP32-S3 with official BLE stack."
 #endif
 
+static constexpr char ACCESSORY_SETUP_UUID[]="7D9B1E20-4F6A-4C88-A3D2-6E5F0190B7C1";
 static constexpr uint32_t MAX_TTL = 5000, MIN_INTERVAL = 50;
 static constexpr size_t MAX_BODY = 1024, MAX_TEXT = 64;
 static WebServer http(80);
@@ -39,10 +40,35 @@ static SemaphoreHandle_t stateLock;
 static std::atomic<bool> connected{false}, encrypted{false}, emergency{false};
 static std::atomic<uint32_t> pairUntil{0};
 static std::atomic<uint16_t> connId{0xffff};
-// Read/written only on the serialized Bluedroid callback task.
+static std::atomic<uint32_t> authEvents{0}, authRejects{0}, disconnectEvents{0};
+static std::atomic<uint32_t> safetyStackFree{0};
+static std::atomic<int> lastDisconnectReason{-1}, lastEncryptionStatus{-1};
+static std::atomic<uint32_t> notifyEvents{0}, notifyErrors{0};
+static std::atomic<int> lastNotifyCode{0};
+#if defined(CONFIG_NIMBLE_ENABLED)
+static ble_gap_event_listener gapDiagnosticsListener{};
+// Passive observer only. No locks, allocation, logging, or BLE calls here.
+static int gapDiagnostics(ble_gap_event *event,void *) {
+  if(event->type==BLE_GAP_EVENT_DISCONNECT)
+    lastDisconnectReason.store(event->disconnect.reason);
+  if(event->type==BLE_GAP_EVENT_ENC_CHANGE)
+    lastEncryptionStatus.store(event->enc_change.status);
+  return 0;
+}
+#endif
+class ReportDiagnostics final : public BLECharacteristicCallbacks {
+  void onStatus(BLECharacteristic *,Status status,uint32_t code) override {
+    notifyEvents.fetch_add(1);lastNotifyCode.store((int)code);
+    if(status!=Status::SUCCESS_NOTIFY && status!=Status::SUCCESS_INDICATE)
+      notifyErrors.fetch_add(1);
+  }
+};
+static ReportDiagnostics reportDiagnostics;
+// Read/written only on the serialized BLE callback task.
 static uint8_t targetAddress[6] = {0};
 static String bootId, sessionId, controlEpoch;
 static bool armed = false;
+static bool calibrationMode = false;
 static uint32_t armedUntil = 0, nextSequence = 1, lastAcceptedAt = 0;
 static String lastId, lastState = "none", lastError;
 
@@ -138,7 +164,7 @@ static void finishJob(const char *state,const char *reason="") {
   job.active=false; job.text=""; lastError=reason;
 }
 static void disarm(const char *reason) {
-  finishJob("aborted",reason); armed=false; sessionId=""; nextSequence=1;controlEpoch=randomId();
+  finishJob("aborted",reason); armed=false; calibrationMode=false; sessionId=""; nextSequence=1;controlEpoch=randomId();
 }
 
 class ServerCallbacks final : public BLEServerCallbacks {
@@ -153,6 +179,8 @@ class ServerCallbacks final : public BLEServerCallbacks {
   }
   void onDisconnect(BLEServer *,esp_ble_gatts_cb_param_t *p) override {
     if(p->disconnect.conn_id!=connId.load()) return;
+    lastDisconnectReason.store(p->disconnect.reason);
+    disconnectEvents.fetch_add(1);
     encrypted.store(false); connected.store(false); connId.store(0xffff);
     emergency.store(true); pairUntil.store(0);
     // Deliberately do not auto-advertise/re-arm after loss of target.
@@ -166,6 +194,7 @@ class ServerCallbacks final : public BLEServerCallbacks {
   }
   void onDisconnect(BLEServer *,ble_gap_conn_desc *p) override {
     if(p->conn_handle!=connId.load())return;
+    disconnectEvents.fetch_add(1);
     encrypted.store(false);connected.store(false);connId.store(0xffff);
     emergency.store(true);pairUntil.store(0);
   }
@@ -174,25 +203,28 @@ class ServerCallbacks final : public BLEServerCallbacks {
 class SecurityCallbacks final : public BLESecurityCallbacks {
   uint32_t onPassKeyRequest() override { return 0; }
   void onPassKeyNotify(uint32_t) override {}
-  bool onSecurityRequest() override { return pairingOpen(); }
+  bool onSecurityRequest() override { return pairingOpen() || usable(); }
   bool onConfirmPIN(uint32_t) override { return false; }
   #if defined(CONFIG_BLUEDROID_ENABLED)
   void onAuthenticationComplete(esp_ble_auth_cmpl_t result) override {
     if(memcmp(targetAddress,result.bd_addr,sizeof(targetAddress))!=0) return;
-    bool ok=result.success && connected.load() && pairingOpen() &&
-      (result.auth_mode & ESP_LE_AUTH_REQ_SC_ONLY);
+    authEvents.fetch_add(1);
+    bool ok=hidpilot::acceptAuthentication(connected.load(),
+      result.success && (result.auth_mode & ESP_LE_AUTH_REQ_SC_ONLY), pairingOpen(), encrypted.load());
     encrypted.store(ok);
     if(ok) pairUntil.store(0);
-    else { emergency.store(true); if(connId.load()!=0xffff) bleServer->disconnect(connId.load()); }
+    else { authRejects.fetch_add(1); emergency.store(true); if(connId.load()!=0xffff) bleServer->disconnect(connId.load()); }
   }
 #else
   void onAuthenticationComplete(ble_gap_conn_desc *p) override {
     if(!p||p->conn_handle!=connId.load())return;
     // SC-only is enforced in ble_hs_cfg; Just Works is deliberately not MITM-authenticated.
-    bool ok=p->sec_state.encrypted&&p->sec_state.key_size==16&&connected.load()&&pairingOpen();
+    authEvents.fetch_add(1);
+    bool ok=hidpilot::acceptAuthentication(connected.load(),
+      p->sec_state.encrypted&&p->sec_state.key_size==16, pairingOpen(), encrypted.load());
     encrypted.store(ok);
     if(ok)pairUntil.store(0);
-    else {emergency.store(true);bleServer->disconnect(p->conn_handle);}
+    else {authRejects.fetch_add(1);emergency.store(true);bleServer->disconnect(p->conn_handle);}
   }
 #endif
 };
@@ -257,7 +289,7 @@ static void safetyTask(void *) {
     if(!armDown && armWasDown && !longHandled && (uint32_t)(now-armDownAt)>=60 && !stopDown) {
       if(armed) disarm("physical_disarm");
       else if(usable() && WiFi.status()==WL_CONNECTED) {
-        releaseReports(); armed=true;armedUntil=now+ARM_LEASE_MS;
+        releaseReports(); calibrationMode=false;armed=true;armedUntil=now+ARM_LEASE_MS;
         sessionId=randomId();nextSequence=1;lastAcceptedAt=0;lastError="";
         for(auto &r:receipts) r=Receipt{};
       }
@@ -270,6 +302,7 @@ static void safetyTask(void *) {
     }
     if(armed && !stopDown) stepJob(now);
     xSemaphoreGive(stateLock);
+    safetyStackFree.store(uxTaskGetStackHighWaterMark(nullptr));
     vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
@@ -290,17 +323,34 @@ static bool authorized() {
   if(difference) {error(401,"unauthorized");return false;}
   return true;
 }
+// Read-only diagnostics: no credentials, text, addresses, or pairing changes.
+static void diagnosticFields(JsonDocument &d) {
+  d["reset_reason"]=(int)esp_reset_reason();
+  d["auth_events"]=authEvents.load();d["auth_rejects"]=authRejects.load();
+  d["disconnect_events"]=disconnectEvents.load();
+  d["last_disconnect_reason"]=lastDisconnectReason.load();
+  d["last_encryption_status"]=lastEncryptionStatus.load();
+  d["notify_events"]=notifyEvents.load();d["notify_errors"]=notifyErrors.load();
+  d["last_notify_code"]=lastNotifyCode.load();
+  d["free_heap_bytes"]=ESP.getFreeHeap();
+  d["min_free_heap_bytes"]=ESP.getMinFreeHeap();
+  d["safety_stack_free_bytes"]=safetyStackFree.load();
+}
 static void statusHandler() {
   if(!authorized()) return;
   JsonDocument d;
   xSemaphoreTake(stateLock,portMAX_DELAY);
   d["ok"]=true;d["boot_id"]=bootId;d["control_epoch"]=controlEpoch;d["uptime_ms"]=millis();
+  d["control_lease_mode"]=!armed?"none":calibrationMode?"calibration":"task";
+  const uint32_t statusNow=millis();
+  d["lease_remaining_ms"]=armed&&timeBefore(statusNow,armedUntil)?armedUntil-statusNow:0;
   d["armed"]=armed;d["hid_connected"]=usable();d["ble_connected"]=connected.load();
   d["session_id"]=sessionId;d["next_sequence"]=nextSequence;d["max_ttl_ms"]=MAX_TTL;
   d["busy"]=job.active;d["last_action_id"]=lastId;d["last_action_state"]=lastState;
   d["last_error"]=lastError;d["pairing_open"]=pairingOpen();
+  d["accessory_setup_service_uuid"]=ACCESSORY_SETUP_UUID;
   d["control_mode"]=SIGHTLATCH_SOFTWARE_CONTROL?"software":"physical";
-  d["firmware_version"]="0.2.0-c3";
+  d["firmware_version"]="0.2.1";diagnosticFields(d);
   d["transport_security"]="plaintext_http_trusted_lan_only";
   xSemaphoreGive(stateLock);respond(200,d);
 }
@@ -362,6 +412,9 @@ static void actionHandler() {
   xSemaphoreTake(stateLock,portMAX_DELAY);
   const uint32_t now=millis();
   if(!armed||emergency.load()||stopPressed()) {code=423;failure="not_armed";}
+  else if(calibrationMode && candidate.kind!=Kind::Release &&
+          (candidate.kind!=Kind::Move || !hidpilot::calibrationMoveAllowed(candidate.dx,candidate.dy)))
+    {code=403;failure="calibration_action_not_allowed";}
   else if(d["boot_id"].as<String>()!=bootId||d["session_id"].as<String>()!=sessionId)
     {code=409;failure="session_mismatch";}
   else {
@@ -406,10 +459,17 @@ static void stopHandler() {
 }
 
 // A request may only authorize the exact control generation the user observed.
-static bool parseControlRequest(String &expectedBoot,String &expectedEpoch) {
+static bool parseControlRequest(String &expectedBoot,String &expectedEpoch,bool *calibration=nullptr) {
   String body=http.arg("plain");JsonDocument d;
   if(body.length()>256||deserializeJson(d,body)||!d["boot_id"].is<String>()||!d["control_epoch"].is<String>()) {
     error(400,"invalid_control_request");return false;
+  }
+  if(calibration) {
+    String mode=d["mode"]|"task";
+    if((!d["mode"].isNull()&&!d["mode"].is<String>())||(mode!="task"&&mode!="calibration")) {
+      error(400,"invalid_control_mode");return false;
+    }
+    *calibration=mode=="calibration";
   }
   expectedBoot=d["boot_id"].as<String>();expectedEpoch=d["control_epoch"].as<String>();
   if(expectedBoot.length()!=32||expectedEpoch.length()!=32){error(400,"invalid_control_request");return false;}
@@ -436,11 +496,32 @@ static void pairHandler() {
   error(403,"physical_control_required");
 #endif
 }
-static void armHandler() {
-  if(!authorized()) return;
+// A dismissed UI may cancel only the unarmed pairing generation it opened.
+// Never translate this operation to unconditional STOP on an older firmware.
+static void cancelPairingHandler() {
+  if(!authorized())return;
 #if SIGHTLATCH_SOFTWARE_CONTROL
   String expectedBoot,expectedEpoch;
   if(!parseControlRequest(expectedBoot,expectedEpoch))return;
+  xSemaphoreTake(stateLock,portMAX_DELAY);
+  if(expectedBoot!=bootId||expectedEpoch!=controlEpoch||armed||!pairingOpen()) {
+    xSemaphoreGive(stateLock);error(409,"pairing_window_changed");return;
+  }
+  pairUntil.store(0);controlEpoch=randomId();
+  bleServer->getAdvertising()->stop();
+  if(connected.load()&&!encrypted.load())bleServer->disconnect(connId.load());
+  JsonDocument d;d["ok"]=true;d["pairing_open"]=false;d["boot_id"]=bootId;
+  d["control_epoch"]=controlEpoch;
+  xSemaphoreGive(stateLock);respond(200,d);
+#else
+  error(403,"physical_control_required");
+#endif
+}
+static void armHandler() {
+  if(!authorized()) return;
+#if SIGHTLATCH_SOFTWARE_CONTROL
+  String expectedBoot,expectedEpoch;bool requestedCalibration=false;
+  if(!parseControlRequest(expectedBoot,expectedEpoch,&requestedCalibration))return;
   xSemaphoreTake(stateLock,portMAX_DELAY);
   if(expectedBoot!=bootId||expectedEpoch!=controlEpoch) {
     xSemaphoreGive(stateLock);error(409,"control_epoch_mismatch");return;
@@ -448,9 +529,13 @@ static void armHandler() {
   if(emergency.load()||!usable()||WiFi.status()!=WL_CONNECTED) {
     xSemaphoreGive(stateLock);error(409,"hid_or_wifi_unavailable");return;
   }
+  if(armed&&calibrationMode!=requestedCalibration) {
+    xSemaphoreGive(stateLock);error(409,"control_mode_mismatch");return;
+  }
   // An accidental retry must not extend the lease or change an active session.
   if(!armed) {
-    releaseReports();armed=true;armedUntil=millis()+ARM_LEASE_MS;
+    releaseReports();calibrationMode=requestedCalibration;armed=true;
+    armedUntil=millis()+hidpilot::controlLeaseMs(calibrationMode,ARM_LEASE_MS);
     sessionId=randomId();nextSequence=1;lastAcceptedAt=0;lastError="";
     for(auto &r:receipts) r=Receipt{};
   }
@@ -482,7 +567,10 @@ static void serialProvision() {
     String command=d["command"]|"";
     if(command=="status") {
       JsonDocument response;response["ok"]=true;response["configured"]=bridgeReady;
-      response["firmware_version"]="0.2.0-c3";response["ip"]=WiFi.localIP().toString();
+      response["firmware_version"]="0.2.1";
+      response["boot_id"]=bootId;response["uptime_ms"]=millis();
+      response["ble_connected"]=connected.load();response["hid_connected"]=usable();
+      diagnosticFields(response);response["ip"]=WiFi.localIP().toString();
       serializeJson(response,Serial);Serial.println();continue;
     }
     if(command!="configure" || !d["ssid"].is<String>() || !d["password"].is<String>() || !d["token"].is<String>() ||
@@ -501,6 +589,7 @@ static void serialProvision() {
 
 void setup() {
   Serial.begin(115200);
+  Serial.printf("SightLatch reset_reason=%d\n",(int)esp_reset_reason());
 #if !SIGHTLATCH_SOFTWARE_CONTROL
   pinMode(STOP_GPIO,INPUT_PULLUP);pinMode(ARM_GPIO,INPUT_PULLUP);
 #endif
@@ -517,6 +606,11 @@ void setup() {
   if(!stateLock){Serial.println("No mutex; halted.");for(;;)delay(1000);}
   bootId=randomId();controlEpoch=randomId();
   BLEDevice::init(BLE_DEVICE_NAME);
+#if defined(CONFIG_NIMBLE_ENABLED)
+  if(ble_gap_event_listener_register(&gapDiagnosticsListener,gapDiagnostics,nullptr)!=0) {
+    Serial.println("BLE diagnostics listener unavailable.");
+  }
+#endif
   bleServer=BLEDevice::createServer();bleServer->setCallbacks(new ServerCallbacks());
   bleServer->advertiseOnDisconnect(false);
   BLEDevice::setSecurityCallbacks(new SecurityCallbacks());
@@ -531,12 +625,27 @@ void setup() {
   security->setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK|ESP_BLE_ID_KEY_MASK);
   auto *hid=new BLEHIDDevice(bleServer);
   keyboardReport=hid->inputReport(1);mouseReport=hid->inputReport(2);
+  keyboardReport->setCallbacks(&reportDiagnostics);mouseReport->setCallbacks(&reportDiagnostics);
   hid->manufacturer()->setValue("Local prototype");
   // Development placeholder IDs only; do not claim another vendor's identity.
   hid->pnp(0x02,0x0000,0x0000,0x0001);hid->hidInfo(0,1);
   hid->reportMap(reportMap,sizeof(reportMap));hid->startServices();hid->setBatteryLevel(100);
-  auto *adv=bleServer->getAdvertising();adv->setAppearance(HID_MOUSE);
-  adv->addServiceUUID(hid->hidService()->getUUID());adv->setScanResponse(true);
+  // Discovery only: no characteristics, credentials, or control operations.
+  bleServer->createService(ACCESSORY_SETUP_UUID)->start();
+  auto *adv=bleServer->getAdvertising();
+  BLEAdvertisementData discovery, scanResponse;
+  discovery.setFlags(0x06); // General discoverable, BR/EDR unsupported.
+  discovery.setCompleteServices(BLEUUID(ACCESSORY_SETUP_UUID));
+  discovery.setCompleteServices(BLEUUID((uint16_t)0x1812));
+  discovery.setAppearance(HID_MOUSE);
+  scanResponse.setName(BLE_DEVICE_NAME);
+  // 3 flags + 18 custom UUID + 4 HID UUID + 4 appearance = 29 bytes.
+  // Name is only in scan response (12 bytes for "SightLatch").
+  if(discovery.getPayload().length()>31 || scanResponse.getPayload().length()>31 ||
+     !adv->setAdvertisementData(discovery) || !adv->setScanResponseData(scanResponse)) {
+    Serial.println("Discovery advertisement setup failed; halted.");for(;;)delay(1000);
+  }
+  adv->setScanResponse(true);
   // No advertising until an explicit authenticated software request or physical long press.
   if(xTaskCreatePinnedToCore(safetyTask,"hid-safety",8192,nullptr,3,nullptr,tskNO_AFFINITY)!=pdPASS) {
     Serial.println("Safety task failed; halted.");for(;;)delay(1000);
@@ -548,6 +657,7 @@ void setup() {
   http.on("/v1/stop",HTTP_POST,stopHandler);
   http.on("/v1/pair",HTTP_POST,pairHandler);
   http.on("/v1/arm",HTTP_POST,armHandler);
+  http.on("/v1/cancel_pairing",HTTP_POST,cancelPairingHandler);
   http.onNotFound([](){error(404,"not_found");});http.begin();
   bridgeReady=true;
   Serial.println("SightLatch started DISARMED. Explicit pairing and ARM required.");

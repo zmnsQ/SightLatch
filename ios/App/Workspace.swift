@@ -136,7 +136,7 @@ extension PilotViewModel {
         guard workspace.profiles.count < 12 else { notice = "模型档案已达12个"; return }
         configuration.provider = "openai"; configuration.endpoint = endpoint
         configuration.model = modelID; configuration.gatewayVisionConfirmed = true
-        configuration.uploadConsent = false; configuration.allowLowRiskNavigation = false
+        configuration.textPlanningConsent = false; configuration.uploadConsent = false; configuration.allowLowRiskNavigation = false
         apiKey = key
         guard saveCurrentProfile(name: name, asNew: true) else { return }
         notice = "网关档案已配置，未发起网络连接。核对网关的数据去向后，再单独同意屏幕上传。"
@@ -145,6 +145,7 @@ extension PilotViewModel {
         guard !isSessionActive else { notice = "请先停止会话再切换模型"; return }
         var candidate = profile.configuration
         // Upload consent is fresh for each endpoint switch, even when a profile previously had consent.
+        candidate.textPlanningConsent = false
         candidate.uploadConsent = false
         candidate.chatGPTPlanConsent = false
         configuration = candidate
@@ -224,6 +225,8 @@ extension PilotViewModel {
         var profiles = workspace.profiles
         if let index = profiles.firstIndex(where: { $0.id == workspace.selectedProfileID }) { profiles[index].configuration = configuration }
         for i in profiles.indices {
+            profiles[i].configuration.automaticCalibrationProfile = nil
+            profiles[i].configuration.textPlanningConsent = false
             profiles[i].configuration.uploadConsent = false
             profiles[i].configuration.chatGPTPlanConsent = false
             profiles[i].configuration.relativeModeConfirmed = false
@@ -255,7 +258,8 @@ extension PilotViewModel {
                       profile.configuration.frameInterval.isFinite, profile.configuration.maxFrameAge.isFinite else { throw PilotError.message("导入配置包含无效参数") }
                 profile.id = UUID().uuidString
                 profile.configuration.chatGPTPlanConsent = false
-                profile.configuration.uploadConsent = false; profile.configuration.relativeModeConfirmed = false
+                profile.configuration.automaticCalibrationProfile = nil
+                profile.configuration.textPlanningConsent = false; profile.configuration.uploadConsent = false; profile.configuration.relativeModeConfirmed = false
                 profile.configuration.allowLowRiskNavigation = false
                 profile.configuration.gatewayVisionConfirmed = false
                 profile.configuration.continuedProcessingEnabled = false
@@ -272,7 +276,7 @@ extension PilotViewModel {
     }
     func exportDiagnostics() throws -> Data {
         // Deliberately exclude tasks, API keys, tokens, URLs, hostnames, model names, and raw log text.
-        let report: [String: Any] = ["format": "HIDPilot-redacted-diagnostics", "version": 1,
+        var report: [String: Any] = ["format": "HIDPilot-redacted-diagnostics", "version": 2,
             "generated_at": ISO8601DateFormatter().string(from: Date()),
             "system_version": ProcessInfo.processInfo.operatingSystemVersionString,
             "app_version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
@@ -286,6 +290,18 @@ extension PilotViewModel {
             "last_observed_armed": lastDeviceStatus?.armed ?? false,
             "recovery_category": recovery.title,
             "build_test_status": "iOS application build/runtime not verified; consult packaged Linux verification report"]
+        // Export only an already accepted, same-target, allowlisted snapshot. No refresh,
+        // status request or retry occurs here; stale evidence never becomes current readiness.
+        report["device_snapshot_available"] = false
+        if diagnosticDeviceURL == configuration.deviceURL,
+           let fields = lastDiagnosticSnapshot, let capturedAt = diagnosticCapturedAt {
+            let age = max(0, Date().timeIntervalSince(capturedAt))
+            report["device_snapshot_available"] = true
+            report["device_snapshot"] = fields
+            report["device_snapshot_captured_at"] = ISO8601DateFormatter().string(from: capturedAt)
+            report["device_snapshot_age_seconds"] = Int(age)
+            report["device_snapshot_stale"] = age >= 10 || !deviceStatusIsFresh
+        }
         return try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
     }
 }

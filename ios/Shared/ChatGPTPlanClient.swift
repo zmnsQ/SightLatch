@@ -74,18 +74,26 @@ actor ChatGPTPlanClient {
         }
     }
     func response(model: String, instructions: String, task: String, jpeg: Data) async throws -> String {
+        try await requestResponse(model: model, instructions: instructions, task: task, jpeg: jpeg)
+    }
+    func textResponse(model: String, instructions: String, task: String) async throws -> String {
+        try await requestResponse(model: model, instructions: instructions, task: task, jpeg: nil)
+    }
+    private func requestResponse(model: String, instructions: String, task: String, jpeg: Data?) async throws -> String {
         try Task.checkCancellation()
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(try await ChatGPTOAuth.shared.accessToken())", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 15
+        var content: [[String: Any]] = [["type": "input_text", "text": task]]
+        if let jpeg { content.append(["type": "input_image", "image_url": "data:image/jpeg;base64," + jpeg.base64EncodedString(), "detail": "low"]) }
         request.httpBody = try JSONSerialization.data(withJSONObject: ["model": model, "instructions": instructions,
             "store": false, "stream": true,
-            "input": [["role": "user", "content": [
-                ["type": "input_text", "text": task],
-                ["type": "input_image", "image_url": "data:image/jpeg;base64," + jpeg.base64EncodedString(), "detail": "low"]]]]])
+            "input": [["role": "user", "content": content]]])
         let (bytes, response) = try await ChatGPTHTTP.session.bytes(for: request)
+        defer { bytes.task.cancel() }
         guard let http = response as? HTTPURLResponse else { throw ChatGPTAuthError.message("ChatGPT 网络响应无效。") }
         guard (200..<300).contains(http.statusCode) else {
             var data = Data()

@@ -2,6 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSAccessorySetupKitSupports</key>
+	<array><string>Bluetooth</string></array>
+	<key>NSAccessorySetupBluetoothServices</key>
+	<array><string>7D9B1E20-4F6A-4C88-A3D2-6E5F0190B7C1</string></array>
+	<key>NSAccessorySetupBluetoothNames</key>
+	<array><string>SightLatch</string></array>
+	<key>NSAccessorySetupBluetoothCompanyIdentifiers</key>
+	<array/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh_CN</string>
 	<key>CFBundleExecutable</key>

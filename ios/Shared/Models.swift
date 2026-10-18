@@ -1,12 +1,30 @@
 import Foundation
 import ActivityKit
 
+struct PointerCalibrationContext: Codable, Equatable {
+    var deviceURL: String
+    var phoneModel: String
+    var orientation: String
+    var pixelWidth: Int
+    var pixelHeight: Int
+    var scale: Double
+}
+struct PointerCalibrationProfile: Codable {
+    var context: PointerCalibrationContext
+    var pixelsPer100X: Double
+    var pixelsPer100Y: Double
+    var verifiedAt: Date
+    var observationSource = "UIKit indirect-pointer hover; in-app canvas only"
+    var hardwareBootID: String?
+}
 struct PilotConfiguration: Codable {
+    var automaticCalibrationProfile: PointerCalibrationProfile?
     var provider = "responses"
     var endpoint = "https://api.openai.com/v1/responses"
     var model = ""
     var deviceURL = "http://hidbridge.local"
     var chatGPTPlanConsent: Bool?
+    var textPlanningConsent: Bool?
     var uploadConsent = false
     var relativeModeConfirmed = false
     var allowLowRiskNavigation = false

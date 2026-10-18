@@ -103,24 +103,26 @@ struct VoiceTaskComposer: View {
     @StateObject private var recorder = VoiceTaskRecorder()
     @ObservedObject private var router = PilotShortcutRouter.shared
     @State private var originalDraft = ""
+    @State private var voiceMessage: String?
     @State private var startTask: Task<Void, Never>?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Button {
-                    if recorder.isRecording || recorder.isRequestingPermission { stopRecording() }
-                    else { begin() }
-                } label: {
-                    Label(recorder.isRecording ? "结束听写" : recorder.isRequestingPermission ? "取消授权等待" : "语音输入",
-                          systemImage: recorder.isRecording ? "stop.circle.fill" : "mic")
-                }
-                if recorder.isRecording {
-                    Button("取消") { startTask?.cancel(); recorder.cancel(); text = originalDraft }
-                }
-            }
-            if let message = recorder.message { Text(message).font(.caption).foregroundStyle(.secondary) }
+        Button {
+            if recorder.isRecording || recorder.isRequestingPermission { stopRecording() }
+            else { begin() }
+        } label: {
+            Image(systemName: recorder.isRecording ? "waveform" : "mic")
+                .font(.body).frame(width: 44, height: 44)
+                .foregroundStyle(recorder.isRecording ? Color.red : Color.primary)
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel(recorder.isRecording ? "结束听写" : recorder.isRequestingPermission ? "取消授权等待" : "语音输入")
+        .accessibilityHint("语音只填写草稿，不会发送任务")
+        .accessibilityIdentifier("chat.microphone")
+        .alert("语音输入", isPresented: Binding(get: { voiceMessage != nil }, set: { if !$0 { voiceMessage = nil } })) {
+            Button("好") { voiceMessage = nil }
+        } message: { Text(voiceMessage ?? "") }
+        .onChange(of: recorder.message) { _, value in voiceMessage = value }
         .onChange(of: recorder.transcript) { _, value in
             guard !value.isEmpty else { return }
             text = originalDraft.isEmpty ? value : originalDraft + "\n" + value

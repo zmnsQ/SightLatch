@@ -26,7 +26,7 @@ class C3Contracts(unittest.TestCase):
         self.assertLess(stop.index('controlEpoch=randomId();emergency.store(true);'),stop.index('respond(202,d)'))
         for name in ('pairHandler','armHandler'):
             body=s.split('static void '+name+'() {',1)[1].split('\n}',1)[0]
-            self.assertIn('if(!parseControlRequest(expectedBoot,expectedEpoch))return;',body)
+            self.assertIn('if(!parseControlRequest(expectedBoot,expectedEpoch'+(',&requestedCalibration' if name=='armHandler' else '')+'))return;',body)
             self.assertIn('if(expectedBoot!=bootId||expectedEpoch!=controlEpoch)',body)
             self.assertIn('error(409,"control_epoch_mismatch");return;',body)
         self.assertIn('nextSequence=1;controlEpoch=randomId();',s)

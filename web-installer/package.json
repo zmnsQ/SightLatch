@@ -1,6 +1,6 @@
 {
   "name": "sightlatch-web-installer",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local USB installer for SightLatch ESP32-C3 firmware",
   "scripts": {
     "test": "node --test tests/*.test.js",

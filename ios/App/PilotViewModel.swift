@@ -5,11 +5,26 @@ import UIKit
 
 @MainActor
 final class PilotViewModel: ObservableObject {
+    @Published var automaticCalibration = AutomaticCalibrationState()
+    var calibrationObservation: CalibrationObservation?
+    var calibrationCanvasContext: PointerCalibrationContext?
+    var calibrationCanvasWidth: Double = 0
+    var calibrationCanvasHeight: Double = 0
+    @Published var calibrationFlow = PointerCalibrationState()
+    var calibrationConfiguration: PilotConfiguration?
+    var calibrationTimeoutTask: Task<Void, Never>?
+    var calibrationRequestInFlight = false
+    @Published var taskFlow = TaskPlanningState()
+    var planningTask: Task<String, Error>?
     @Published var configuration = SharedStore.shared.configuration
     @Published var task = ""
     @Published var workspace = SharedStore.shared.read("workspace.json", as: WorkspaceState.self) ?? WorkspaceState()
     @Published var selectedTaskID: String?
     @Published var lastDeviceStatus: DeviceStatus?
+    // Diagnostic-only cache. Never consulted by freshness, authorization or task execution.
+    private(set) var lastDiagnosticSnapshot: [String: Any]?
+    private(set) var diagnosticCapturedAt: Date?
+    private(set) var diagnosticDeviceURL: String?
     @Published var deviceSummary = "尚未检查局域网 / BLE"
     @Published var apiKey = ""
     @Published var deviceToken = ""
@@ -21,10 +36,18 @@ final class PilotViewModel: ObservableObject {
     @Published var preparing = false
     @Published var stopping = false
     @Published var probing = false
+    @Published var probeState = DeviceProbeState.idle
+    @Published var pairingState = DevicePairingState.idle
     @Published var controllingDevice = false
     @Published var deviceStatusCheckedAt: Date?
     private var preparingRequestInFlight = false
     private var refreshingDeviceStatus = false
+    private var deviceProbeTask: Task<DeviceStatus, Error>?
+    private var deviceProbeID = UUID()
+    private var pairingTask: Task<Void, Never>?
+    private var pairingCancelRequested = false
+    private let pairingWindowDuration: TimeInterval = 30
+    private let pairingPollNanoseconds: UInt64 = 1_000_000_000
     private var deviceControlID = UUID()
     private var deviceObservationID = UUID()
     private var observedDeviceURL: String?
@@ -36,7 +59,7 @@ final class PilotViewModel: ObservableObject {
     var softwareControlAvailable: Bool { deviceStatusIsFresh && lastDeviceStatus?.supportsSoftwareControl == true }
     @Published var storageWarning: String? = nil
     private var preparationID = UUID()
-    var isSessionActive: Bool { preparingRequestInFlight || preparing || stopping || sending || controllingDevice || SharedStore.shared.command?.running == true }
+    var isSessionActive: Bool { calibrationFlow.isBusy || preparingRequestInFlight || preparing || stopping || sending || controllingDevice || SharedStore.shared.command?.running == true }
     private var ticker: AnyCancellable?
 
     init() {
@@ -51,6 +74,14 @@ final class PilotViewModel: ObservableObject {
         ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect().sink { [weak self] _ in self?.refresh() }
     }
     func refresh() {
+        if configuration.automaticCalibrationProfile != nil, configuration.relativeModeConfirmed {
+            do { try validateAutomaticCalibrationContext() }
+            catch {
+                let reason = error.localizedDescription
+                notice = reason
+                if isSessionActive && !stopping { Task { await stop(); notice = reason + " 已停止当前会话。" } }
+            }
+        }
         // Poll only an explicitly checked device, in the foreground. This never arms it.
         if !deviceStatusIsFresh, lastDeviceStatus != nil {
             lastDeviceStatus = nil
@@ -64,6 +95,7 @@ final class PilotViewModel: ObservableObject {
         status = SharedStore.shared.status
         logs = SharedStore.shared.logs
         syncTaskStatus()
+        syncPlanningState()
         if !preparing { prepared = SharedStore.shared.command?.running == true }
         if status.phase == "停止", let command = SharedStore.shared.command, command.id == status.sessionID, command.running {
             try? SharedStore.shared.updateCommand(sessionID: command.id) { $0.running = false }
@@ -76,6 +108,7 @@ final class PilotViewModel: ObservableObject {
         guard storageWarning == nil else { notice = storageWarning!; return false }
         guard !isSessionActive else { notice = "修改配置或密钥前请先停止会话。"; return false }
         do {
+            configuration.deviceURL = try AddressPolicy.device(configuration.deviceURL).absoluteString
             try configuration.validate()
             configuration.maxSteps = min(50, max(1, configuration.maxSteps))
             if !apiKey.isEmpty { try SecretStore.save(apiKey, account: configuration.apiAccount); apiKey = "" }
@@ -101,14 +134,16 @@ final class PilotViewModel: ObservableObject {
     }
     private func acceptDeviceStatus(_ value: DeviceStatus, from checkedConfiguration: PilotConfiguration) {
         guard configuration.deviceURL == checkedConfiguration.deviceURL else { return }
+        lastDiagnosticSnapshot = value.redactedDiagnosticFields
+        diagnosticCapturedAt = Date()
+        diagnosticDeviceURL = checkedConfiguration.deviceURL
         observedDeviceURL = checkedConfiguration.deviceURL
         deviceStatusCheckedAt = Date()
         lastDeviceStatus = value
-        let authorization = value.armed ? "已允许控制（最多5分钟）" : (value.supportsSoftwareControl ? "尚未允许控制" : "未 ARM（请按硬件按钮）")
-        deviceSummary = "局域网已响应 · BLE \(value.hid_connected ? "已连接" : "未连接") · \(authorization)"
+        deviceSummary = value.hid_connected ? "设备已连接" : "局域网已响应 · 蓝牙尚未连接"
     }
     func refreshDeviceStatus() async {
-        guard !refreshingDeviceStatus, !controllingDevice, !stopping, !preparingRequestInFlight, !sending else { return }
+        guard !probing, !refreshingDeviceStatus, !controllingDevice, !stopping, !preparingRequestInFlight, !sending else { return }
         refreshingDeviceStatus = true
         let observationID = UUID()
         deviceObservationID = observationID
@@ -124,67 +159,214 @@ final class PilotViewModel: ObservableObject {
             deviceSummary = "设备不可达或检查失败，BLE / 控制状态未知；必要时拔掉 USB 电源。"
         }
     }
-    func probe() async {
-        guard !probing, !refreshingDeviceStatus, save() else { return }
-        probing = true
-        defer { probing = false }
-        observedDeviceURL = configuration.deviceURL
-        await refreshDeviceStatus()
-        notice = deviceSummary
+    func cancelProbe() {
+        guard probing else { return }
+        deviceProbeID = UUID()
+        deviceObservationID = UUID()
+        deviceProbeTask?.cancel()
+        deviceProbeTask = nil
+        probing = false
+        probeState = .init(phase: .failure, message: "检查已取消，可以重试。", failure: .cancelled)
     }
-    // Only the user's explicit device buttons call this. Polling and resume never ARM.
-    func requestDeviceControl(pairing: Bool) async {
-        guard !isSessionActive, !probing, save() else { return }
+    // Hardware onboarding does not validate or save an unfinished AI/model form.
+    private func saveDeviceConnection() -> Bool {
+        guard storageWarning == nil else { notice = storageWarning!; return false }
+        guard !isSessionActive else { notice = "请先停止当前会话。"; return false }
+        do {
+            let address = try AddressPolicy.device(configuration.deviceURL).absoluteString
+            guard address.count <= 255 else { throw PilotError.message("设备地址过长。") }
+            var saved = SharedStore.shared.configuration
+            let changedDevice = saved.deviceURL != address
+            saved.deviceURL = address
+            if changedDevice { saved.relativeModeConfirmed = false }
+            // Only explicitly entered tokens are saved, bound to this exact validated endpoint.
+            // No automatic credential migration or copying to a different host.
+            if !deviceToken.isEmpty { try SecretStore.save(deviceToken, account: saved.deviceAccount) }
+            try SharedStore.shared.write(saved, to: "configuration.json")
+            if let index = workspace.profiles.firstIndex(where: { $0.id == workspace.selectedProfileID }) {
+                if workspace.profiles[index].configuration.deviceURL != address {
+                    workspace.profiles[index].configuration.relativeModeConfirmed = false
+                }
+                workspace.profiles[index].configuration.deviceURL = address
+                guard persistWorkspace() else { return false }
+            }
+            configuration.deviceURL = address
+            if changedDevice { configuration.relativeModeConfirmed = false }
+            return true
+        } catch { notice = error.localizedDescription; return false }
+    }
+    func probe() async {
+        guard !probing else { return } // Coalesce repeated taps; do not queue network work.
+        guard !isSessionActive else {
+            probeState = .init(phase: .failure, message: "请先停止当前会话，再保存并检查设备。")
+            return
+        }
+        let probeID = UUID()
+        deviceProbeID = probeID
+        let stopGeneration = SharedStore.shared.stopGeneration
+        probing = true
+        probeState = .init(phase: .saving, message: "正在保存连接设置…")
+        defer {
+            if deviceProbeID == probeID { probing = false; deviceProbeTask = nil }
+        }
+        // Yield before synchronous Keychain/App Group work so the spinner can appear.
+        await Task.yield()
+        guard deviceProbeID == probeID else { return }
+        guard SharedStore.shared.stopGeneration == stopGeneration, !Task.isCancelled else {
+            probeState = .init(phase: .failure, message: "检查已取消，可以重试。", failure: .cancelled)
+            return
+        }
+        guard saveDeviceConnection() else {
+            probeState = .init(phase: .failure, message: "保存失败：" + notice, failure: .save)
+            return
+        }
+        let checkedConfiguration = configuration
+        let checkedToken = deviceToken
+        let observationID = UUID()
+        deviceObservationID = observationID // Supersede any older background status read.
+        lastDeviceStatus = nil
+        deviceStatusCheckedAt = nil
+        observedDeviceURL = nil
+        probeState = .init(phase: .checking, message: "正在通过 Wi-Fi 检查设备（最长15秒）…读取设备报告的 BLE 状态，不扫描蓝牙。")
+        do {
+            let request = Task { try await HardwareClient(configuration: checkedConfiguration).status() }
+            deviceProbeTask = request
+            let value = try await withTaskCancellationHandler {
+                try await request.value
+            } onCancel: { request.cancel() }
+            guard deviceProbeID == probeID else { return }
+            guard deviceObservationID == observationID,
+                  SharedStore.shared.stopGeneration == stopGeneration,
+                  configuration.deviceURL == checkedConfiguration.deviceURL else {
+                probeState = .init(phase: .failure, message: "检查期间配置或停止状态已变化，请重试。", failure: .cancelled)
+                return
+            }
+            acceptDeviceStatus(value, from: checkedConfiguration)
+            if deviceToken == checkedToken { deviceToken = "" }
+            probeState = .init(phase: .success, message: deviceSummary)
+            notice = deviceSummary
+        } catch {
+            guard deviceProbeID == probeID else { return }
+            guard deviceObservationID == observationID,
+                  SharedStore.shared.stopGeneration == stopGeneration,
+                  configuration.deviceURL == checkedConfiguration.deviceURL else {
+                probeState = .init(phase: .failure, message: "检查已被停止操作取消。", failure: .cancelled)
+                return
+            }
+            let failure = DeviceProbeFailure.classify(error)
+            deviceSummary = failure.localizedDescription
+            probeState = .init(phase: .failure, message: deviceSummary, failure: failure)
+            notice = deviceSummary
+        }
+    }
+    func startPairing() async {
+        guard pairingTask == nil else { return }
+        guard !isSessionActive, !probing else {
+            pairingState = .init(phase: .error, message: "请先结束当前检查或会话，再开始配对。")
+            return
+        }
+        pairingState = .init(phase: .opening, message: "正在保存并请求设备打开配对窗口…")
+        guard saveDeviceConnection() else {
+            pairingState = .init(phase: .error, message: "保存失败：" + notice)
+            return
+        }
         controllingDevice = true
+        pairingCancelRequested = false
         let operationID = UUID()
         deviceControlID = operationID
         deviceObservationID = UUID()
-        let checkedConfiguration = configuration
-        let expectedStopGeneration = SharedStore.shared.stopGeneration
-        let client = HardwareClient(configuration: checkedConfiguration)
-        var didSendControlRequest = false
-        defer { controllingDevice = false }
+        let checked = configuration
+        let generation = SharedStore.shared.stopGeneration
+        let operation = Task { await self.runPairing(configuration: checked, operationID: operationID, stopGeneration: generation) }
+        pairingTask = operation
+        await operation.value
+        pairingTask = nil
+        controllingDevice = false
+    }
+    func cancelPairing() async {
+        guard let operation = pairingTask else { return }
+        pairingCancelRequested = true
+        pairingState = .init(phase: .cancelled, message: "正在取消配对并确认窗口关闭…")
+        // Drain a pending pair reply to learn its epoch before cleanup. Do not unlock a
+        // new local control session while an older cancellation could still send STOP.
+        await operation.value
+    }
+    private func runPairing(configuration checked: PilotConfiguration, operationID: UUID, stopGeneration: String?) async {
+        let client = HardwareClient(configuration: checked)
+        var receipt: DevicePairingReceipt?
+        func ownsOperation() -> Bool {
+            deviceControlID == operationID && SharedStore.shared.stopGeneration == stopGeneration && configuration.deviceURL == checked.deviceURL
+        }
         do {
             let current = try await client.status()
-            guard deviceControlID == operationID, SharedStore.shared.stopGeneration == expectedStopGeneration else { return }
-            acceptDeviceStatus(current, from: checkedConfiguration)
-            guard current.supportsSoftwareControl else {
-                throw PilotError.message("此固件不支持 App 配对 / 授权；请使用硬件 ARM / STOP 按钮。")
+            guard ownsOperation() else { pairingState = .init(phase: .cancelled, message: "设备或停止状态已变化，配对已取消。"); return }
+            if pairingCancelRequested { pairingState = .init(phase: .cancelled, message: "配对已取消，尚未打开窗口。"); return }
+            acceptDeviceStatus(current, from: checked)
+            guard current.supportsSoftwareControl else { throw PilotError.message("此固件需要硬件按钮打开配对窗口。") }
+            guard !current.armed else { throw PilotError.message("设备正在控制中，请先停止再配对。") }
+            if current.hid_connected {
+                acceptDeviceStatus(current, from: checked)
+                pairingState = .init(phase: .connected, message: "设备已连接，可以返回聊天准备任务。")
+                return
             }
-            if pairing {
-                guard !current.hid_connected, !current.armed else { throw PilotError.message("设备已连接或已授权；无需重新打开配对窗口。") }
-                didSendControlRequest = true
-                try await client.beginPairing(expected: current)
-                guard deviceControlID == operationID, SharedStore.shared.stopGeneration == expectedStopGeneration else {
-                    try await client.stopAndVerify()
+            let openedAt = Date() // Conservative: the firmware timer starts before its reply arrives.
+            receipt = try await client.beginPairing(expected: current)
+            let deadline = openedAt.addingTimeInterval(pairingWindowDuration)
+            while true {
+                guard ownsOperation() else { pairingState = .init(phase: .cancelled, message: "停止或设备状态已变化，已结束配对检查。"); return }
+                if pairingCancelRequested {
+                    let closed = try await client.closePairingWindow(expected: receipt!, stillOwned: ownsOperation)
+                    let message: String
+                    switch closed {
+                    case .closed: message = "配对已取消，设备窗口已关闭。"
+                    case .unsupported: message = "配对检查已取消。此固件不支持单独关闭窗口，将在打开后30秒自动到期；不会停止其它控制会话。"
+                    case .changed: message = "配对检查已取消；设备状态已变化，未干扰新会话。"
+                    }
+                    pairingState = .init(phase: .cancelled, message: message)
                     return
                 }
-                notice = "配对窗口已打开30秒。请在 iPhone 系统设置中配对 SightLatch；这尚未允许控制。"
-            } else {
-                guard current.hid_connected else { throw PilotError.message("请先在 iPhone 系统设置完成加密 BLE 配对。") }
-                guard !current.armed else { notice = "设备已经获得授权；不会续期。需要新授权时先停止控制。"; return }
-                didSendControlRequest = true
-                let armed = try await client.armSoftwareControl(expected: current)
-                guard deviceControlID == operationID, SharedStore.shared.stopGeneration == expectedStopGeneration else {
-                    try await client.stopAndVerify()
+                pairingState = .init(phase: .waiting, message: "配对窗口已打开，正在等待加密连接。请在系统设置→蓝牙选择 SightLatch，随后返回此处。", deadline: deadline)
+                let observed = try await client.status()
+                guard ownsOperation() else { pairingState = .init(phase: .cancelled, message: "配对检查已取消。"); return }
+                if pairingCancelRequested { continue }
+                guard observed.boot_id == receipt!.boot_id, observed.control_epoch == receipt!.control_epoch, !observed.armed else {
+                    pairingState = .init(phase: .error, message: "设备已重启或控制状态已变化，已停止配对检查；不会干扰新会话。")
                     return
                 }
-                acceptDeviceStatus(armed, from: checkedConfiguration)
-                notice = "设备已允许控制，最多5分钟。断连或停止会撤销，不自动续期；请留在安全测试页面。"
+                // Firmware defines hid_connected as connected && encrypted (16-byte key).
+                if observed.hid_connected {
+                    acceptDeviceStatus(observed, from: checked)
+                    pairingState = .init(phase: .connected, message: "设备已连接，可以返回聊天准备任务。")
+                    return
+                }
+                if observed.pairing_open == false {
+                    pairingState = .init(phase: .expired, message: "设备配对窗口已关闭，尚未确认加密连接。可重试。")
+                    return
+                }
+                guard Date() < deadline else {
+                    pairingState = .init(phase: .expired, message: "本次30秒配对等待已结束，未确认连接。请检查系统蓝牙状态后重试。")
+                    return
+                }
+                try await Task.sleep(nanoseconds: pairingPollNanoseconds)
             }
         } catch {
-            // A lost HTTP reply may hide a successful ARM. Fail closed by issuing STOP.
-            if didSendControlRequest {
-                do { try await client.stopAndVerify() }
-                catch { notice = "控制请求结果不确定，且未确认停止。请立即拔掉设备 USB 电源。"; lastDeviceStatus = nil; deviceStatusCheckedAt = nil; deviceSummary = "设备控制状态未知；未确认停止，请拔掉 USB 电源"; return }
-            }
-            lastDeviceStatus = nil; deviceStatusCheckedAt = nil
-            deviceSummary = "设备状态尚未重新确认，请检查连接；不会自动重试控制请求"
-            notice = "\(error.localizedDescription) 请重新检查设备状态；控制请求不会自动重试。"
+            guard ownsOperation() else { pairingState = .init(phase: .cancelled, message: "配对检查已被停止操作取消。"); return }
+            let message = (error as? PilotError)?.localizedDescription ?? DeviceProbeFailure.classify(error).localizedDescription
+            pairingState = .init(phase: pairingCancelRequested ? .cancelled : .error,
+                message: message + (receipt == nil ? " 若请求已送达但回包丢失，设备窗口会在30秒内自动关闭。" : " 无法确认窗口已关闭；请等待30秒自动到期后重试。"))
         }
+    }
+    // Compatibility entry point: pairing is supported; task ARM requires a fresh plan permit.
+    func requestDeviceControl(pairing: Bool) async {
+        guard pairing else { notice = "请先在聊天发送目标，阅读计划并明确允许本次控制。"; return }
+        await startPairing()
     }
     func prepare() async {
         guard !isSessionActive, !probing, save() else { return }
+        guard taskFlow.consumePermission(goal: task.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            notice = "请先发送目标，阅读新计划并明确允许；旧授权不能再次使用。"; return
+        }
+        let preparedGoal = taskFlow.goal
         SharedStore.shared.remove("frame.json")
         SharedStore.shared.remove("lease.json")
         preparingRequestInFlight = true
@@ -201,6 +383,7 @@ final class PilotViewModel: ObservableObject {
         let sessionClient = HardwareClient(configuration: configuration)
         let expectedStopGeneration = SharedStore.shared.stopGeneration
         do {
+            try validateAutomaticCalibrationContext()
             guard configuration.uploadConsent, configuration.relativeModeConfirmed, !configuration.model.isEmpty,
                   !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw PilotError.message("请填写任务、视觉模型，完成指针校准，并明确同意上传屏幕。")
@@ -215,21 +398,31 @@ final class PilotViewModel: ObservableObject {
                 _ = try SecretStore.load(configuration.apiAccount)
             }
             var device = try await sessionClient.status()
-            guard preparationID == token, SharedStore.shared.stopGeneration == expectedStopGeneration else { return }
-            // prepare() is invoked only by the explicit Start Control button.
+            guard preparationID == token, SharedStore.shared.stopGeneration == expectedStopGeneration,
+                  task.trimmingCharacters(in: .whitespacesAndNewlines) == preparedGoal else { return }
+            if let profile = configuration.automaticCalibrationProfile, profile.hardwareBootID != device.boot_id {
+                configuration.relativeModeConfirmed = false
+                throw PilotError.message("硬件已重启或更换，请重新测量指针校准。")
+            }
+            // prepare() consumes the explicit permission for this specific planned goal.
             // Never renew an existing authorization or arm from observation/resume.
             if device.supportsSoftwareControl, !device.armed {
                 guard device.hid_connected else { throw PilotError.message("请先点开始蓝牙配对，并在 iPhone 系统设置完成配对。") }
                 requestedSoftwareArm = true
                 device = try await sessionClient.armSoftwareControl(expected: device)
-                guard preparationID == token, SharedStore.shared.stopGeneration == expectedStopGeneration else {
+                guard preparationID == token, SharedStore.shared.stopGeneration == expectedStopGeneration,
+                  task.trimmingCharacters(in: .whitespacesAndNewlines) == preparedGoal else {
                     try await sessionClient.stopAndVerify()
                     return
                 }
             }
+            guard device.control_lease_mode != "calibration" else {
+                throw PilotError.message("请先结束短时校准并确认停止，再重新规划和允许任务控制。")
+            }
             guard device.armed, device.hid_connected else { throw PilotError.message("请先在系统配对 BLE HID，再在 App 允许控制（软件模式）或按硬件 ARM。") }
-            guard preparationID == token, SharedStore.shared.stopGeneration == expectedStopGeneration else { return }
-            let command = SessionCommand(task: String(task.prefix(2000)), running: true)
+            guard preparationID == token, SharedStore.shared.stopGeneration == expectedStopGeneration,
+                  task.trimmingCharacters(in: .whitespacesAndNewlines) == preparedGoal else { return }
+            let command = SessionCommand(task: preparedGoal, running: true)
             try SharedStore.shared.startCommand(command, expectedStopGeneration: expectedStopGeneration)
             createdSessionID = command.id
             if configuration.continuedProcessingEnabled == true {
@@ -238,7 +431,13 @@ final class PilotViewModel: ObservableObject {
                     try? SharedStore.shared.updateCommand(sessionID: command.id) { $0.running = false }
                     throw error
                 }
-                guard preparationID == token, SharedStore.shared.stopGeneration == expectedStopGeneration else { ContinuedSession.shared.cancel(); return }
+                guard preparationID == token, SharedStore.shared.stopGeneration == expectedStopGeneration,
+                  task.trimmingCharacters(in: .whitespacesAndNewlines) == preparedGoal else {
+                    ContinuedSession.shared.cancel()
+                    try? SharedStore.shared.updateCommand(sessionID: command.id) { $0.running = false }
+                    try await sessionClient.stopAndVerify()
+                    return
+                }
             }
             try SharedStore.shared.write(PilotStatus(phase: "待广播", detail: "会话已准备，请主动开始系统广播", steps: 0, sessionID: command.id), to: "status.json")
             status = SharedStore.shared.status
@@ -264,12 +463,18 @@ final class PilotViewModel: ObservableObject {
                 ContinuedSession.shared.cancel()
                 await HardwareClient(configuration: SharedStore.shared.configuration).stop()
             }
-            guard preparationID == token, SharedStore.shared.stopGeneration == expectedStopGeneration else { return }
+            guard preparationID == token, SharedStore.shared.stopGeneration == expectedStopGeneration,
+                  task.trimmingCharacters(in: .whitespacesAndNewlines) == preparedGoal else { return }
             prepared = SharedStore.shared.command?.running == true
             if !hardwareStopUnconfirmed { notice = error.localizedDescription }
         }
     }
     func stop() async {
+        if automaticCalibration.isBusy { automaticCalibration.id = UUID(); automaticCalibration.phase = .error; automaticCalibration.detail = "校准已取消，未保存新的结果。" }
+        if calibrationFlow.isBusy { await endPointerCalibration() }
+        let onlyPlanning = !isSessionActive && [.planning, .awaitingPermission].contains(taskFlow.phase)
+        planningTask?.cancel(); planningTask = nil; taskFlow.cancel()
+        if onlyPlanning { notice = "已取消规划和待授权计划；未开始控制。"; return }
         guard !stopping else { return }
         stopping = true
         let hadControlRequestInFlight = preparingRequestInFlight || controllingDevice
@@ -322,6 +527,7 @@ final class PilotViewModel: ObservableObject {
             do { try store.write(stoppedStatus, to: "status.json"); status = stoppedStatus }
             catch { notice += " 状态记录写入失败。" }
             syncTaskStatus()
+        syncPlanningState()
         }
         await PilotActivityManager.shared.finish(sessionID: sessionID,
             phase: hardwareConfirmed && localError == nil ? "硬件已解除ARM" : "请核实硬件停止", steps: status.steps)
@@ -367,21 +573,9 @@ final class PilotViewModel: ObservableObject {
         } catch { notice = error.localizedDescription }
     }
     func manual(_ kind: ActionProposal.Kind, dx: Int? = nil, dy: Int? = nil, wheel: Int? = nil, key: String? = nil, text: String? = nil) async {
-        guard !sending else { return }
-        guard !isSessionActive, !probing else { notice = "手动校准前请停止自动会话，避免竞争。"; return }
-        if let text, !text.utf8.allSatisfy({ (32...126).contains($0) }) || text.count > 64 {
-            notice = "键盘原型仅支持最多64字符可打印 US ASCII，不支持中文。"; return
+        guard kind == .move, let dx, let dy, wheel == nil, key == nil, text == nil else {
+            notice = "校准仅允许显式的单轴微移，不允许点击、滚动、按键或输入。"; return
         }
-        guard save() else { return }
-        sending = true
-        defer { sending = false }
-        do {
-            let client = HardwareClient(configuration: configuration)
-            let device = try await client.status()
-            let proposal = ActionProposal(type: kind, dx: dx, dy: dy, wheel: wheel, button: "left", key: key, text: text,
-                purpose: "navigation", risk: "low", requiresConfirmation: false, reason: "用户手动校准", pointerVisible: true, highRisk: false, confidence: 1)
-            try await client.send(proposal, expectedSession: device.session_id)
-            notice = "手动动作已由硬件确认完成。请观察手机实际效果。"
-        } catch { notice = error.localizedDescription; await HardwareClient(configuration: configuration).stop() }
+        await moveCalibrationPointer(dx: dx, dy: dy)
     }
 }

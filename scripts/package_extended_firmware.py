@@ -14,7 +14,7 @@ for family,mode,folder,chip,boot,freq in [('ESP32','uart','esp32-uart',0,0x1000,
         assert binary[offset]==0xe9 and int.from_bytes(binary[offset+12:offset+14],'little')==chip
     assert binary[boot+2:boot+4]==bytes([2,0x2f if freq=='80m' else 0x20])
     assert binary[0x8000:0x8002]==b'\xaa\x50'
-    name=f'sightlatch-0.2.0-{folder}.bin';(out/name).write_bytes(binary)
+    name=f'sightlatch-0.2.1-{folder}.bin';(out/name).write_bytes(binary)
     source=ROOT/'firmware/build/classic-source/IPhoneHIDBridge' if family=='ESP32' else ROOT/'firmware/IPhoneHIDBridge'
     target='esp32:esp32:esp32:FlashMode=dio,FlashFreq=40,FlashSize=4M,PartitionScheme=huge_app' if family=='ESP32' else f'esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot={"cdc" if mode=="usb" else "default"},FlashMode=dio,FlashSize=4M,PartitionScheme=huge_app,PSRAM=disabled'
     source_hashes={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(source.glob('*')) if p.is_file()}

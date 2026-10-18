@@ -171,12 +171,34 @@ class SourceContracts(unittest.TestCase):
         self.assertNotIn('armSoftwareControl', refresh)
         self.assertNotIn('beginPairing', refresh)
         explicit = ui.split('func requestDeviceControl(', 1)[1].split('func prepare()', 1)[0]
-        self.assertIn('guard current.supportsSoftwareControl', explicit)
-        self.assertIn('guard !current.armed', explicit)
-        self.assertIn('guard deviceControlID == operationID', explicit)
-        self.assertIn('try await client.stopAndVerify()', explicit)
+        # The compatibility entry point can only open pairing, never bypass a task permit.
+        self.assertIn('guard pairing else', explicit)
+        self.assertIn('await startPairing()', explicit)
+        self.assertNotIn('armSoftwareControl', explicit)
+        self.assertNotIn('stopAndVerify', explicit)
+        pairing = ui.split('private func runPairing(', 1)[1].split('func requestDeviceControl(', 1)[0]
+        self.assertIn('guard current.supportsSoftwareControl', pairing)
+        self.assertIn('guard !current.armed', pairing)
+        self.assertIn('deviceControlID == operationID', pairing)
+        self.assertIn('SharedStore.shared.stopGeneration == stopGeneration', pairing)
+        self.assertIn('client.beginPairing(expected: current)', pairing)
+        self.assertIn('client.closePairingWindow(expected: receipt!, stillOwned: ownsOperation)', pairing)
+        self.assertNotIn('armSoftwareControl', pairing)
+        self.assertNotIn('stopAndVerify', pairing)  # No unconditional STOP on window cancellation.
         start = ui.split('func prepare()', 1)[1].split('func stop()', 1)[0]
         self.assertIn('if device.supportsSoftwareControl, !device.armed', start)
+        self.assertIn('guard taskFlow.consumePermission(goal:', start)
+        self.assertLess(start.index('taskFlow.consumePermission'), start.index('sessionClient.armSoftwareControl'))
+        self.assertIn('task.trimmingCharacters(in: .whitespacesAndNewlines) == preparedGoal', start)
+        self.assertIn('guard device.control_lease_mode != "calibration"', start)
+        calibration = source("ios/App/PilotPointerCalibration.swift")
+        begin_calibration = calibration.split('func beginPointerCalibration()', 1)[1].split('private func calibrationIsCurrent', 1)[0]
+        self.assertIn('guard !isSessionActive, !taskFlow.isBusy, !probing, !calibrationRequestInFlight', begin_calibration)
+        self.assertIn('guard !device.armed', begin_calibration)
+        self.assertIn('client.armSoftwareControl(expected: device, mode: "calibration")', begin_calibration)
+        self.assertIn('device.control_lease_mode == "calibration"', begin_calibration)
+        self.assertIn('remaining > 0, remaining <= 60_000', begin_calibration)
+        self.assertIn('guard calibrationIsCurrent(id, phase: .starting) else { try await client.stopAndVerify(); return }', begin_calibration)
         self.assertIn('guard preparationID == token', start)
         self.assertIn('requestedSoftwareArm = true', start)
         self.assertIn('try await sessionClient.stopAndVerify()', start)
@@ -189,7 +211,7 @@ class SourceContracts(unittest.TestCase):
         self.assertIn('while preparingRequestInFlight || controllingDevice', stop)
         self.assertIn('let hadControlRequestInFlight = preparingRequestInFlight || controllingDevice', stop)
         view = source("ios/App/HomeView.swift")
-        for title in ['开始接管', '开始蓝牙配对', '允许控制5分钟', '停止控制']:
+        for title in ['允许屏幕上传与设备控制', '开始蓝牙配对', '允许并自动校准', '停止控制']:
             self.assertIn(title, view)
 
     def test_device_status_expires_and_foreground_polling_never_arms(self):
@@ -222,15 +244,33 @@ class SourceContracts(unittest.TestCase):
     def test_control_requests_are_bound_to_fresh_device_epoch(self):
         network = source("ios/Shared/Network.swift")
         self.assertIn("var control_epoch: String?", network)
-        self.assertIn("ControlRequest(boot_id: expected.boot_id, control_epoch: epoch)", network)
+        self.assertIn("ControlRequest(boot_id: expected.boot_id, control_epoch: epoch, mode: mode)", network)
         self.assertIn("let epoch = expected.control_epoch, epoch.count == 32", network)
         self.assertIn("func beginPairing(expected: DeviceStatus)", network)
-        self.assertIn("func armSoftwareControl(expected: DeviceStatus)", network)
+        self.assertIn("func armSoftwareControl(expected: DeviceStatus, mode: String? = nil)", network)
         self.assertIn("reply.control_epoch == expected.control_epoch", network)
         ui = source("ios/App/PilotViewModel.swift")
         self.assertIn("client.beginPairing(expected: current)", ui)
-        self.assertIn("client.armSoftwareControl(expected: current)", ui)
+        self.assertNotIn("client.armSoftwareControl(expected: current)", ui)  # Removed bypass.
         self.assertIn("sessionClient.armSoftwareControl(expected: device)", ui)
+        calibration = source("ios/App/PilotPointerCalibration.swift")
+        self.assertIn('client.armSoftwareControl(expected: device, mode: "calibration")', calibration)
+        self.assertIn('device.control_epoch == calibrationFlow.controlEpoch', calibration)
+        self.assertIn('device.boot_id == calibrationFlow.bootID', calibration)
+        self.assertIn('device.session_id == calibrationFlow.sessionID', calibration)
+        # Exactly the task-permit and explicit short calibration paths may call ARM.
+        arm_calls = []
+        for path in (ROOT / "ios" / "App").glob("*.swift"):
+            for line in path.read_text().splitlines():
+                if '.armSoftwareControl(' in line:
+                    arm_calls.append((path.name, line.strip()))
+        self.assertEqual({name for name, _ in arm_calls}, {"PilotViewModel.swift", "PilotPointerCalibration.swift"})
+        self.assertEqual(len(arm_calls), 2)
+        cancel = network.split('func closePairingWindow(', 1)[1].split('func armSoftwareControl(', 1)[0]
+        self.assertIn('Cancellation(boot_id: expected.boot_id, control_epoch: expected.control_epoch)', cancel)
+        self.assertIn('request("v1/cancel_pairing", method: "POST"', cancel)
+        self.assertIn('error.statusCode == 409', cancel)
+        self.assertNotIn('stopAndVerify', cancel)
 
     def test_activity_start_rechecks_command_after_suspension(self):
         manager = source("ios/App/PilotActivityManager.swift")

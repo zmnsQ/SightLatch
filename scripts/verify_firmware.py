@@ -2,7 +2,7 @@ from pathlib import Path
 import hashlib,json
 root=Path(__file__).resolve().parents[1]/'web-installer/public'
 m=json.loads((root/'firmware/manifest.json').read_text())
-assert m['version']=='0.2.0-c3'
+assert m['version']=='0.2.1'
 repo=Path(__file__).resolve().parents[1]
 for path,digest in {**m['source_sha256'],**m.get('extended_source_sha256',{})}.items():
     target=(repo/path).resolve();assert repo in target.parents

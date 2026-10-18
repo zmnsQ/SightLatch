@@ -27,6 +27,9 @@ jobs:
           scripts/build_extended_firmware.sh
           python3 scripts/verify_firmware.py
           python3 tests/check_c3_firmware.py
+          python3 tests/check_arm_diagnostics.py
+          g++ -std=c++17 -Wall -Wextra -Werror tests/authentication_policy_test.cpp -o /tmp/auth-policy
+          /tmp/auth-policy
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

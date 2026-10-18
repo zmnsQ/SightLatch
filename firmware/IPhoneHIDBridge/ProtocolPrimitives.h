@@ -6,6 +6,19 @@ namespace hidpilot {
 inline bool timeBefore(uint32_t now, uint32_t deadline) {
   return (int32_t)(deadline-now)>0;
 }
+// A closed admission window must not revoke an already authenticated link when
+// the stack reports a repeated successful encryption event. Failed encryption
+// still fails closed; a fresh connection must pass the open-window check.
+inline bool acceptAuthentication(bool linkConnected, bool secure, bool windowOpen,
+                                 bool previouslyAuthenticated) {
+  return linkConnected && secure && (windowOpen || previouslyAuthenticated);
+}
+inline uint32_t controlLeaseMs(bool calibration, uint32_t taskLease) {
+  return calibration ? (taskLease < 60000U ? taskLease : 60000U) : taskLease;
+}
+inline bool calibrationMoveAllowed(int dx,int dy) {
+  return dx>=-10 && dx<=10 && dy>=-10 && dy<=10;
+}
 inline bool asciiKey(char c,uint8_t &key,uint8_t &mods) {
   mods=0; key=0;
   if(c < 32 || c > 126) return false;

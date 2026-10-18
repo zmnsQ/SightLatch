@@ -13,16 +13,8 @@ struct WorkspaceHubView: View {
         NavigationStack {
             List {
                 Section {
-                    Button("开始使用与权限检查", systemImage: "checklist") { showOnboarding = true }
                     Button("模型档案 · \(model.selectedProfileName)", systemImage: "square.stack.3d.up") { showProfiles = true }
-                    Button("任务库与待办队列", systemImage: "tray.full") { showTasks = true }
                     Button("设置迁移与脱敏诊断", systemImage: "square.and.arrow.up") { showTransfer = true }
-                }
-                Section("显示") {
-                    Picker("主题", selection: $model.workspace.theme) {
-                        Text("跟随系统").tag("system"); Text("浅色").tag("light"); Text("深色").tag("dark")
-                    }.onChange(of: model.workspace.theme) { _, _ in model.persistWorkspace() }
-                    Text("遵循系统动态字体与减弱动态效果。图标按钮均有辅助功能标签；状态同时用文字表达，不只依赖颜色。").font(.caption)
                 }
                 Section("恢复建议") {
                     Text(model.recovery.title).font(.headline)
@@ -38,7 +30,7 @@ struct WorkspaceHubView: View {
                 Section("构建状态") {
                     Text("功能源码正在完善。Linux可做的检查与iPhone实际验证不同；此界面不代表已通过iOS编译或真机验收。").font(.caption)
                 }
-            }.navigationTitle("工作区")
+            }.navigationTitle("高级与数据")
                 .sheet(isPresented: $showOnboarding) { OnboardingView() }
                 .sheet(isPresented: $showProfiles) { ProfilesView() }
                 .sheet(isPresented: $showTasks) { TaskLibraryView() }
@@ -50,48 +42,163 @@ struct WorkspaceHubView: View {
     }
 }
 
+/// Four focused pages. Completing the introduction grants no device or upload permission.
 struct OnboardingView: View {
     @EnvironmentObject private var model: PilotViewModel
     @Environment(\.dismiss) private var dismiss
-    @State private var showSettings = false
+    @State private var step = 0
+    @State private var showDevice = false
+    @State private var showAI = false
     @State private var showCalibration = false
+    private let titles = ["把目标交给 SightLatch", "先连接你的设备", "选择你的 AI", "开始之前，留好退路"]
+    private let symbols = ["bubble.left.and.text.bubble.right", "antenna.radiowaves.left.and.right", "sparkles", "hand.raised"]
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    Label("让操作始终可控", systemImage: "hand.raised.fill").font(.title2.bold())
-                    Text("SightLatch 使用你主动开始的系统广播观察屏幕，并通过你的ESP32蓝牙鼠标逐步操作这台iPhone。默认不自动点击；模型无法替你保证安全。")
-                    Text("先准备：ESP32刷入固件 → 同一可信Wi-Fi → 系统蓝牙配对 → 必要时辅助触控 → 设置视觉模型 → 校准指针 → App开始接管（软件模式）或按硬件ARM。")
-                    ForEach(model.readiness()) { item in
-                        HStack(alignment: .top, spacing: 12) {
-                            Image(systemName: item.passed ? "checkmark.circle.fill" : "circle.dashed")
-                                .foregroundStyle(item.passed ? Color.green : Color.secondary)
-                                .accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(item.title + (item.passed ? " · 已检查" : " · 待准备")).font(.headline)
-                                Text(item.detail).font(.caption).foregroundStyle(.secondary)
-                            }
+                VStack(alignment: .leading, spacing: 28) {
+                    Text("第 \(step + 1) 步，共 4 步").font(.subheadline).foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        ForEach(0..<4) { index in
+                            Capsule().fill(index <= step ? Color.primary : Color(.tertiarySystemFill)).frame(height: 3)
                         }
+                    }.accessibilityHidden(true)
+                    if step == 1 {
+                        PilotConnectionIllustration().padding(.top, 8)
+                    } else {
+                        Image(systemName: symbols[step]).font(.system(size: 44, weight: .light)).accessibilityHidden(true)
+                            .padding(.top, 20)
                     }
-                    Button("设置模型、设备与上传同意", systemImage: "slider.horizontal.3") { showSettings = true }.buttonStyle(.borderedProminent)
-                    Button("在前台检查局域网与BLE", systemImage: "network") { Task { await model.probe() } }.buttonStyle(.bordered).disabled(model.isSessionActive)
-                    Button("进入指针校准实验台", systemImage: "scope") { showCalibration = true }.buttonStyle(.bordered)
-                    Button("打开本App系统设置", systemImage: "gearshape") {
-                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
-                    }
-                    Text("局域网权限只有真实连接请求后由系统决定是否弹窗。BLE HID配对请在系统蓝牙设置完成；App不假装拥有配对权限。广播必须由你通过系统按钮主动开始。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text("进入密码、付款、医疗或任何不应上传的页面前，先结束系统广播。软件停止可能因网络或进程终止失败，保留物理STOP；没有按钮时随时准备拔掉USB电源。")
-                        .font(.callout).padding().background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
-                    Button("我已了解，进入工作区") {
+                    Text(titles[step]).font(.largeTitle.bold())
+                    pageContent
+                }.frame(maxWidth: 540, alignment: .leading).padding(28).frame(maxWidth: .infinity)
+            }
+            .background(PilotPalette.canvas)
+            .safeAreaInset(edge: .bottom) {
+                Button {
+                    if step < 3 { step += 1 }
+                    else {
                         model.workspace.onboardingComplete = true
                         if model.persistWorkspace() { dismiss() }
-                    }.buttonStyle(.borderedProminent)
-                }.padding(24)
-            }.navigationTitle("开始使用").navigationBarTitleDisplayMode(.inline)
-                .sheet(isPresented: $showSettings) { SettingsView() }
-                .sheet(isPresented: $showCalibration) { CalibrationView() }
+                    }
+                } label: {
+                    Text(step == 3 ? "我已了解，进入聊天" : "继续")
+                        .font(.headline).frame(maxWidth: .infinity, minHeight: 44)
+                }.buttonStyle(.borderedProminent).tint(PilotPalette.accent)
+                    .padding(24).background(PilotPalette.canvas)
+            }
+            .navigationTitle("开始使用").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if step > 0 { Button("返回") { step -= 1 } }
+                }
+                ToolbarItem(placement: .topBarTrailing) { Button("稍后设置") { dismiss() } }
+            }
+            .sheet(isPresented: $showDevice) { DeviceSettingsView() }
+            .sheet(isPresented: $showAI) { ConfigurationDetailView(safety: false) }
+            .sheet(isPresented: $showCalibration) { CalibrationView() }
         }
+    }
+    @ViewBuilder private var pageContent: some View {
+        switch step {
+        case 0:
+            Text("先描述目标，AI 会给出简短计划。你明确允许后，才申请屏幕广播与设备控制。")
+                .font(.title3)
+            Text("SightLatch 通过你主动开启的系统广播观察屏幕，再通过 ESP32 蓝牙鼠标操作 iPhone。默认不自动点击；模型不能替你保证安全。")
+                .foregroundStyle(.secondary)
+        case 1:
+            Text("ESP32 需要 USB 供电，并和 iPhone 连接同一可信 Wi-Fi。")
+                .font(.title3)
+            Text("在设备设置填地址与 Token，检查连接，再按提示在系统蓝牙中配对。局域网权限由真实连接请求触发；App 不会替你确认系统权限。HTTP 会明文传输 Token 与指令，请使用可信隔离网络。")
+                .foregroundStyle(.secondary)
+            Button("打开设备设置", systemImage: "network") { showDevice = true }.buttonStyle(.bordered)
+        case 2:
+            Text("连接 AI 账户，确认屏幕截图交给谁。")
+                .font(.title3)
+            Text("广播会持续发送跨 App 截图，服务方可能保留图像。上传同意需要你在 AI 账户页主动开启，系统广播还需单独确认。ChatGPT 套餐和 API 计费是独立路径。")
+                .foregroundStyle(.secondary)
+            Button("设置 AI 与上传同意", systemImage: "sparkles") { showAI = true }.buttonStyle(.bordered)
+        default:
+            Text("先校准指针，再从安全页面尝试一个小任务。")
+                .font(.title3)
+            Button("打开指针校准", systemImage: "scope") { showCalibration = true }.buttonStyle(.bordered)
+            VStack(alignment: .leading, spacing: 16) {
+                Label("运行时，发送按钮会变为停止。设备设置始终有紧急停止。", systemImage: "stop.circle")
+                Label("密码、付款、医疗等敏感页面前，先结束系统广播。", systemImage: "rectangle.slash")
+                Label("软件停止未确认时，按物理 STOP 或拔掉 USB 电源。不要无人值守。", systemImage: "powerplug")
+            }.font(.callout)
+            Text("完成介绍只进入聊天，不会自动授予权限、开始广播或控制设备。未完成的准备会在开始任务时检查。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// A small settings map, with one authoritative location for each setting.
+struct SettingsView: View {
+    @EnvironmentObject private var model: PilotViewModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var destination: Destination?
+    private enum Destination: String, Identifiable {
+        case device, ai, safety, workspace, onboarding
+        var id: String { rawValue }
+    }
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+                    Text("设置").font(.largeTitle.bold()).padding(.top, 12)
+                    VStack(spacing: 0) {
+                        settingsRow("设备", subtitle: "连接与配对", symbol: "computermouse", destination: .device)
+                        Divider().padding(.leading, 62)
+                        settingsRow("AI 账户", subtitle: "模型与任务文字", symbol: "person.crop.circle", destination: .ai)
+                        Divider().padding(.leading, 62)
+                        settingsRow("权限与安全", subtitle: "屏幕上传与操作范围", symbol: "hand.raised", destination: .safety)
+                    }.background(PilotPalette.group, in: RoundedRectangle(cornerRadius: 28))
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("通用").font(.subheadline).foregroundStyle(.secondary).padding(.leading, 4)
+                        VStack(spacing: 0) {
+                            HStack(spacing: 16) {
+                                Image(systemName: "circle.lefthalf.filled").font(.title3).frame(width: 28)
+                                Picker("外观", selection: $model.workspace.theme) {
+                                    Text("跟随系统").tag("system")
+                                    Text("浅色").tag("light")
+                                    Text("深色").tag("dark")
+                                }.onChange(of: model.workspace.theme) { _, _ in model.persistWorkspace() }
+                            }.padding(20)
+                            Divider().padding(.leading, 62)
+                            settingsRow("高级与数据", symbol: "archivebox", destination: .workspace)
+                            Divider().padding(.leading, 62)
+                            settingsRow("使用指南", symbol: "book.closed", destination: .onboarding)
+                        }.background(PilotPalette.group, in: RoundedRectangle(cornerRadius: 28))
+                    }
+                    Text("广播截图会交给你选择的 AI 服务。进入敏感页面前，先结束系统广播。")
+                        .font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 4)
+                }.padding(20).frame(maxWidth: 600).frame(maxWidth: .infinity)
+            }.background(PilotPalette.canvas)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { PilotCloseButton { dismiss() } } }
+            .sheet(item: $destination) { destination in
+                switch destination {
+                case .device: DeviceSettingsView()
+                case .ai: ConfigurationDetailView(safety: false)
+                case .safety: ConfigurationDetailView(safety: true)
+                case .workspace: WorkspaceHubView()
+                case .onboarding: OnboardingView()
+                }
+            }
+        }
+    }
+    private func settingsRow(_ title: String, subtitle: String? = nil, symbol: String, destination target: Destination) -> some View {
+        Button { destination = target } label: {
+            HStack(spacing: 16) {
+                Image(systemName: symbol).font(.title3).frame(width: 28)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(title).font(.body)
+                    if let subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary) }
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+            }.frame(minHeight: 38).padding(20).contentShape(Rectangle())
+        }.buttonStyle(.plain)
     }
 }
 
@@ -135,7 +242,7 @@ struct ProfilesView: View {
                 }.font(.caption)
             }.navigationTitle("模型档案")
                 .sheet(isPresented: $showGateway) { GatewaySetupView() }
-                .sheet(isPresented: $showSettings) { SettingsView() }
+                .sheet(isPresented: $showSettings) { ConfigurationDetailView(safety: false) }
                 .confirmationDialog("移除这个配置档案？Keychain凭据会保留。", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
                     Button("移除档案", role: .destructive) { if let deleting { model.removeProfile(deleting) }; deleting = nil }
                 }

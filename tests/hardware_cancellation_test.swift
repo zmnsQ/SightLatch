@@ -117,6 +117,45 @@ final class Transport {
         do { try await hardware.beginPairing(expected: software); preconditionFailure("Rejected epoch accepted") }
         catch is PilotError {}
         precondition(transport.calls == ["/v1/pair"])
+        // Cancellation is bound atomically to the opened window; never use /v1/stop.
+        let receipt = DevicePairingReceipt(ok: true, pairing_open: true, boot_id: "boot", control_epoch: epoch)
+        transport.calls = []
+        let denied = try await hardware.closePairingWindow(expected: receipt, stillOwned: { false })
+        precondition(denied == .changed && transport.calls.isEmpty)
+        transport.handler = { request in
+            precondition(request.url!.path == "/v1/cancel_pairing")
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
+            precondition(body == ["boot_id": "boot", "control_epoch": epoch])
+            return try JSONSerialization.data(withJSONObject: ["ok": true, "pairing_open": false, "boot_id": "boot", "control_epoch": String(repeating: "d", count: 32)])
+        }
+        let closed = try await hardware.closePairingWindow(expected: receipt, stillOwned: { true })
+        precondition(closed == .closed && transport.calls == ["/v1/cancel_pairing"])
+        for code in [404, 405, 409] {
+            transport.calls = []
+            transport.handler = { _ in throw HTTPStatusFailure(statusCode: code) }
+            let result = try await hardware.closePairingWindow(expected: receipt, stillOwned: { true })
+            precondition(result == (code == 409 ? .changed : .unsupported))
+            precondition(transport.calls == ["/v1/cancel_pairing"])
+        }
+        precondition(legacy.pairing_open == nil && legacy.accessorySetupServiceUUID == nil)
+        print("PASS: conditional pairing cancellation payload, local ownership, server 409 race, legacy 404/405; no unconditional STOP")
+        // Dedicated calibration cannot silently accept a normal five-minute ARM.
+        softwareJSON["control_epoch"] = epoch
+        for (mode, remaining, accepted) in [("calibration", 60000, true), ("task", 60000, false), ("calibration", 60001, false), ("calibration", 0, false)] {
+            softwareJSON["control_lease_mode"] = mode
+            softwareJSON["lease_remaining_ms"] = remaining
+            let reply = try JSONSerialization.data(withJSONObject: softwareJSON)
+            transport.calls = []
+            transport.handler = { request in
+                let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
+                precondition(body == ["boot_id": "boot", "control_epoch": epoch, "mode": "calibration"])
+                return reply
+            }
+            do { _ = try await hardware.armSoftwareControl(expected: software, mode: "calibration"); precondition(accepted) }
+            catch { precondition(!accepted) }
+            precondition(transport.calls == ["/v1/arm"], "ARM must never retry")
+        }
+        print("PASS: actual HardwareClient calibration mode body and hardware TTL confirmation guards")
         print("PASS: exact boot/epoch request bodies, rotated pair epoch, unchanged ARM epoch, missing/stale epoch rejection and no control retry")
         print("PASS: stop during async status, cancellation before dispatch, cancellation after ACK, late completion after STOP; no HID replay")
     }

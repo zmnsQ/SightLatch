@@ -1,6 +1,6 @@
 {
   "name": "SightLatch ESP32 / C3 / S3",
-  "version": "0.2.0-c3",
+  "version": "0.2.1",
   "core": "3.3.5",
   "arduinoJson": "7.0.4",
   "builds": [
@@ -12,10 +12,10 @@
       "flashFrequency": "40m",
       "parts": [
         {
-          "path": "firmware/sightlatch-0.2.0-c3-usb.bin",
+          "path": "firmware/sightlatch-0.2.1-c3-usb.bin",
           "offset": 0,
           "size": 4194304,
-          "sha256": "a45d880b3d23d43454e41df5cf63ad4d950289f0223333606e9411cd4ae2bf97"
+          "sha256": "a920536fe16045f9d463c908d23fe0c0db858c81b82e904d0c48e9a9119c739d"
         }
       ]
     },
@@ -27,19 +27,19 @@
       "flashFrequency": "40m",
       "parts": [
         {
-          "path": "firmware/sightlatch-0.2.0-c3-uart.bin",
+          "path": "firmware/sightlatch-0.2.1-c3-uart.bin",
           "offset": 0,
           "size": 4194304,
-          "sha256": "eb6b142449aa98b711c74e41d3a73cc87b06bfbfe51f1102360f11c72a5c260d"
+          "sha256": "8e3bbd8297417c406775c899a2567144b85c2659fea934a26896db19b12c75a8"
         }
       ]
     },
     {
       "fqbn": "esp32:esp32:esp32:FlashMode=dio,FlashFreq=40,FlashSize=4M,PartitionScheme=huge_app",
       "compiled_source_sha256": {
-        "Bridge.cpp": "cb1bffd87c745a8a406458975f311467a220b260589a21ab48b3f1bde5440dcf",
+        "Bridge.cpp": "d135e8b906f1235a10be5c6aa608ccb6e495038f675bcb3ea0f39d0ed216aba1",
         "IPhoneHIDBridge.ino": "d6d393a756acda7279bfeba764a8da457b4e3a81c2753e1b0048723225663f0d",
-        "ProtocolPrimitives.h": "07cb3c5dc7b00f6333acda2cade65bb106b9fcd0bdd030205be42c753f3bef6a",
+        "ProtocolPrimitives.h": "feb2f7227ecfeb12790fd66ae17926f763a523fb176db60dfd6c8799dc3225ff",
         "config.default.h": "4dddc2b27ee8f8294e012153ff9bf8c97e2e1803c16fb044620070ae476a1f60",
         "config.example.h": "d7bb1fdf97e4c8b2102161e962c14f3fdca94ae43b272ffec10da8e151885226"
       },
@@ -51,19 +51,19 @@
       "flashFrequency": "40m",
       "parts": [
         {
-          "path": "firmware/sightlatch-0.2.0-esp32-uart.bin",
+          "path": "firmware/sightlatch-0.2.1-esp32-uart.bin",
           "offset": 0,
           "size": 4194304,
-          "sha256": "f70aaf5accac9d69314725f82fe4efc4d2b6e3de849d4a1ca7290a5ed0418889"
+          "sha256": "432cd135e4eff4e4dbcb732721f99794a455584fbaedec9ac350867b4354765f"
         }
       ]
     },
     {
       "fqbn": "esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=dio,FlashSize=4M,PartitionScheme=huge_app,PSRAM=disabled",
       "compiled_source_sha256": {
-        "Bridge.cpp": "ae2a2e14fa4ce8a5bc7ccdfe7fda08e6a4db4d83bb80897ab22215b147d99407",
+        "Bridge.cpp": "1688fc171e612a394acbd3446f6a4d45f7f24362259ca48ada312f6b861cf8e9",
         "IPhoneHIDBridge.ino": "d6d393a756acda7279bfeba764a8da457b4e3a81c2753e1b0048723225663f0d",
-        "ProtocolPrimitives.h": "07cb3c5dc7b00f6333acda2cade65bb106b9fcd0bdd030205be42c753f3bef6a",
+        "ProtocolPrimitives.h": "feb2f7227ecfeb12790fd66ae17926f763a523fb176db60dfd6c8799dc3225ff",
         "config.default.h": "4dddc2b27ee8f8294e012153ff9bf8c97e2e1803c16fb044620070ae476a1f60",
         "config.example.h": "d7bb1fdf97e4c8b2102161e962c14f3fdca94ae43b272ffec10da8e151885226"
       },
@@ -75,19 +75,19 @@
       "flashFrequency": "80m",
       "parts": [
         {
-          "path": "firmware/sightlatch-0.2.0-s3-usb.bin",
+          "path": "firmware/sightlatch-0.2.1-s3-usb.bin",
           "offset": 0,
           "size": 4194304,
-          "sha256": "7c191c19c8602cb645d15437df89be3bc30ed0eb1970e18c3c1b1a473fd3141a"
+          "sha256": "38bc99da4cfad1b167d77830321265c0f36bc22455e2af4e17ae895d1befb7dd"
         }
       ]
     },
     {
       "fqbn": "esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=default,FlashMode=dio,FlashSize=4M,PartitionScheme=huge_app,PSRAM=disabled",
       "compiled_source_sha256": {
-        "Bridge.cpp": "ae2a2e14fa4ce8a5bc7ccdfe7fda08e6a4db4d83bb80897ab22215b147d99407",
+        "Bridge.cpp": "1688fc171e612a394acbd3446f6a4d45f7f24362259ca48ada312f6b861cf8e9",
         "IPhoneHIDBridge.ino": "d6d393a756acda7279bfeba764a8da457b4e3a81c2753e1b0048723225663f0d",
-        "ProtocolPrimitives.h": "07cb3c5dc7b00f6333acda2cade65bb106b9fcd0bdd030205be42c753f3bef6a",
+        "ProtocolPrimitives.h": "feb2f7227ecfeb12790fd66ae17926f763a523fb176db60dfd6c8799dc3225ff",
         "config.default.h": "4dddc2b27ee8f8294e012153ff9bf8c97e2e1803c16fb044620070ae476a1f60",
         "config.example.h": "d7bb1fdf97e4c8b2102161e962c14f3fdca94ae43b272ffec10da8e151885226"
       },
@@ -99,24 +99,24 @@
       "flashFrequency": "80m",
       "parts": [
         {
-          "path": "firmware/sightlatch-0.2.0-s3-uart.bin",
+          "path": "firmware/sightlatch-0.2.1-s3-uart.bin",
           "offset": 0,
           "size": 4194304,
-          "sha256": "98c869fbdbe3db77d5c38ad4ec68a05e6cabc5f49fd7a7f2c38963c1371980eb"
+          "sha256": "45467c53d7884d2e31d5b05ed2a32b5833cd9ee2708d5d11450d290cf4697677"
         }
       ]
     }
   ],
   "source_sha256": {
-    "firmware/IPhoneHIDBridge/Bridge.cpp": "ae2a2e14fa4ce8a5bc7ccdfe7fda08e6a4db4d83bb80897ab22215b147d99407",
+    "firmware/IPhoneHIDBridge/Bridge.cpp": "1688fc171e612a394acbd3446f6a4d45f7f24362259ca48ada312f6b861cf8e9",
     "firmware/IPhoneHIDBridge/IPhoneHIDBridge.ino": "d6d393a756acda7279bfeba764a8da457b4e3a81c2753e1b0048723225663f0d",
-    "firmware/IPhoneHIDBridge/ProtocolPrimitives.h": "07cb3c5dc7b00f6333acda2cade65bb106b9fcd0bdd030205be42c753f3bef6a",
+    "firmware/IPhoneHIDBridge/ProtocolPrimitives.h": "feb2f7227ecfeb12790fd66ae17926f763a523fb176db60dfd6c8799dc3225ff",
     "firmware/IPhoneHIDBridge/config.default.h": "4dddc2b27ee8f8294e012153ff9bf8c97e2e1803c16fb044620070ae476a1f60",
     "firmware/IPhoneHIDBridge/config.example.h": "d7bb1fdf97e4c8b2102161e962c14f3fdca94ae43b272ffec10da8e151885226",
     "scripts/build_firmware.sh": "47a1289817db4b14e9b38a7f0c7468e1c32072977986abbe95c1d09e7190300b"
   },
   "extended_source_sha256": {
     "scripts/build_extended_firmware.sh": "3bcccf294bb431832425b0ceb8c2e1d612aee40c20f797fe35ec7e41e34b3c92",
-    "scripts/package_extended_firmware.py": "c89a48b13a6158f6ae1d891d9254e69ed6cc5baa0eb9baa01a018d846f058db6"
+    "scripts/package_extended_firmware.py": "7c99ee3fe075695cd5d84720b847261b9a59cac8b9fff0059f60b95069482438"
   }
 }

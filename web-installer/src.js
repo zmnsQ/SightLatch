@@ -1,6 +1,7 @@
 import {ESPLoader,Transport} from 'esptool-js';
 import SparkMD5 from 'spark-md5';
 import {families,validateDevice,validateImage,validateManifest} from './validation.js';
+import {deviceDiagnostics} from './validation.js';
 import './style.css';
 const $=id=>document.getElementById(id);
 let loader,transport,manifest,busy=false;
@@ -61,7 +62,7 @@ $('config').onsubmit=e=>{e.preventDefault();run(async()=>{
   $('configStatus').textContent='等待板子确认…';const r=await serialCommand({command:'configure',ssid,password,token});
   $('password').value='';$('configStatus').textContent=r.configured?'配置已保存，板子正在重启。等待连接Wi-Fi后，点读取IP。请把令牌填入App。':'请读取状态核实。';
 },'configStatus');};
-$('readStatus').onclick=()=>run(async()=>{const r=await serialCommand({command:'status'});$('configStatus').textContent=`固件 ${r.firmware_version} · 已配置：${r.configured?'是':'否'} · IP：${r.ip}（0.0.0.0表示尚未连上Wi-Fi）`;},'configStatus');
+$('readStatus').onclick=()=>run(async()=>{const r=await serialCommand({command:'status'});$('configStatus').textContent=`固件 ${r.firmware_version} · 已配置：${r.configured?'是':'否'} · IP：${r.ip}（0.0.0.0表示尚未连上Wi-Fi）`;$('deviceDiagnostics').textContent=deviceDiagnostics(r);},'configStatus');
 if(!isSecureContext||!('serial' in navigator)){for(const b of document.querySelectorAll('button'))b.disabled=true;$('status').textContent='需要电脑Chrome/Edge和HTTPS或localhost。iPhone Safari不支持本页串口烧录。';}
 fetch(new URL('firmware/manifest.json',document.baseURI),{cache:'no-store'}).then(r=>{if(!r.ok)throw Error('manifest下载失败');return r.json();}).then(m=>{validateManifest(m,'usb');validateManifest(m,'uart');manifest=m;state();$('version').textContent=`版本 ${m.version} · Arduino-ESP32 ${m.core} · 按芯片选择USB接口镜像 · SHA-256下载校验 + 写入MD5校验`;}).catch(e=>{$('version').textContent=message(e);$('flash').disabled=true;});
 window.addEventListener('pagehide',()=>{$('password').value='';$('token').value='';});
