@@ -271,14 +271,20 @@ struct DeviceSettingsView: View {
                 Section {
                     PilotConnectionIllustration().listRowBackground(Color.clear)
                 }
-                Section("局域网连接") {
+                Section {
                     Group {
-                        TextField("http://hidbridge.local", text: $model.configuration.deviceURL)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("设备地址").font(.subheadline).foregroundStyle(.secondary)
+                            TextField("http://hidbridge.local", text: $model.configuration.deviceURL)
                             .focused($deviceField, equals: .address)
                             .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                        SecureField("设备 Bearer Token", text: $model.deviceToken)
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("设备 Token").font(.subheadline).foregroundStyle(.secondary)
+                            SecureField("设备 Bearer Token", text: $model.deviceToken)
                             .focused($deviceField, equals: .token)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        }
                     }.disabled(model.isSessionActive || model.probing)
                     Text("仅在可信隔离 Wi-Fi 使用；HTTP 会明文传输设备 token 与控制命令。")
                         .font(.caption).foregroundStyle(.secondary)
@@ -286,8 +292,6 @@ struct DeviceSettingsView: View {
                 Section { DeviceControlPanel(onRequest: { deviceField = nil }).buttonStyle(.bordered) }
                     .listRowBackground(PilotPalette.group)
                 Section { Button("指针校准", systemImage: "scope") { deviceField = nil; showCalibration = true } }
-
-                Section { Text("使用“保存并检查连接”保存本页更改。").font(.footnote).foregroundStyle(.secondary) }
             }
             .environment(\.defaultMinListRowHeight, 56)
             .scrollDismissesKeyboard(.interactively)
@@ -295,7 +299,7 @@ struct DeviceSettingsView: View {
             .background { PilotPalette.sheet.contentShape(Rectangle()).onTapGesture { deviceField = nil } }
             .onDisappear { deviceField = nil }
             .navigationTitle("设备设置").navigationBarTitleDisplayMode(.inline)
-            .presentationDetents([.medium, .large])
+            .presentationDetents([.large])
             .presentationDragIndicator(.visible)
             .presentationCornerRadius(32)
             .presentationBackground(PilotPalette.sheet)
@@ -341,8 +345,8 @@ struct DeviceControlPanel: View {
                 HStack(spacing: 8) {
                     if model.probing { ProgressView() }
                     Text(model.probing ? "正在检查连接…" : "保存并检查连接")
-                }
-            }.buttonStyle(.bordered)
+                }.frame(maxWidth: .infinity, minHeight: 32)
+            }.buttonStyle(.borderedProminent)
                 .disabled(model.isSessionActive || model.probing)
                 .accessibilityIdentifier("device.probe")
             if !model.probeState.message.isEmpty {
@@ -350,7 +354,9 @@ struct DeviceControlPanel: View {
                     .accessibilityIdentifier("device.probe.result")
             }
             if model.softwareControlAvailable {
-                Button("开始蓝牙配对") { onRequest(); deviceSheet = .pairing; Task { await model.startPairing() } }
+                Button { onRequest(); deviceSheet = .pairing; Task { await model.startPairing() } } label: {
+                    Text("开始蓝牙配对").frame(maxWidth: .infinity, minHeight: 32)
+                }
                     .disabled(model.isSessionActive || model.probing || model.lastDeviceStatus?.hid_connected == true)
                 Text("配对后即可回到聊天发送任务。先查看 AI 计划，再明确允许截图与设备控制；不会自动开始操作。")
                     .font(.caption).foregroundStyle(.secondary)
@@ -358,7 +364,6 @@ struct DeviceControlPanel: View {
                 Text("此固件使用物理控制，或未声明软件控制能力。请按设备 ARM / STOP 操作。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Button("紧急停止控制", role: .destructive) { Task { await model.stop() } }.disabled(model.stopping)
             Text("USB 供电；App 经 Wi-Fi 发送命令，设备经 BLE HID 操作手机。软件停止若失败，请拔掉 USB 电源。")
                 .font(.caption2).foregroundStyle(.secondary)
         }.padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
@@ -570,63 +575,97 @@ struct ConfigurationDetailView: View {
     @EnvironmentObject private var model: PilotViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var showDelete = false
+    @State private var showProfiles = false
+    @State private var saveError: String?
     var body: some View {
         NavigationStack {
             Form {
+                if let saveError {
+                    Section("未能保存") { PilotSettingsNotice(message: saveError, isError: true) }
+                }
                 if !safety {
-                ChatGPTSettingsSection(model: model)
-                Section("模型服务") {
-                    Picker("协议", selection: $model.configuration.provider) {
-                        Text("ChatGPT 套餐").tag("chatgpt-plan")
-                        Text("OpenAI Responses").tag("responses")
-                        Text("OpenAI 兼容 Chat Completions").tag("openai")
-                        Text("Anthropic Messages").tag("anthropic")
-                        Text("Google Gemini generateContent").tag("gemini")
+                    Section("使用的服务") {
+                        Picker("协议", selection: $model.configuration.provider) {
+                            Text("ChatGPT 套餐").tag("chatgpt-plan")
+                            Text("OpenAI Responses").tag("responses")
+                            Text("OpenAI 兼容 Chat Completions").tag("openai")
+                            Text("Anthropic Messages").tag("anthropic")
+                            Text("Google Gemini generateContent").tag("gemini")
+                        }
                     }
-                    if model.configuration.provider != "chatgpt-plan" {
-                    TextField("完整 HTTPS 请求 URL", text: $model.configuration.endpoint).focused($aiField, equals: .endpoint).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    TextField("支持视觉的模型 ID", text: $model.configuration.model).focused($aiField, equals: .model).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    SecureField("API Key（空白保留已有值）", text: $model.apiKey).focused($aiField, equals: .key).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Text("OpenAI: /v1/responses\n兼容网关: /v1/chat/completions\nAnthropic: https://api.anthropic.com/v1/messages\nGemini: https://generativelanguage.googleapis.com/v1beta/models/模型ID:generateContent\nGemini 模型以 URL 中的 ID 为准。模型是否支持截图、计费和数据保留由供应商决定。").font(.caption)
-                    if model.configuration.provider == "openai" {
-                        Toggle("确认此兼容端点与模型支持图片，且我获准用于此用途", isOn: Binding(get: { model.configuration.gatewayVisionConfirmed == true }, set: { model.configuration.gatewayVisionConfirmed = $0 }))
+                    if model.configuration.provider == "chatgpt-plan" {
+                        ChatGPTSettingsSection(model: model)
+                    } else {
+                        Section("API 连接") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("模型 ID").font(.subheadline).foregroundStyle(.secondary)
+                                TextField("支持视觉的模型 ID", text: $model.configuration.model).focused($aiField, equals: .model).textInputAutocapitalization(.never).autocorrectionDisabled()
+                            }
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("请求地址").font(.subheadline).foregroundStyle(.secondary)
+                                TextField("完整 HTTPS 请求 URL", text: $model.configuration.endpoint).focused($aiField, equals: .endpoint).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                            }
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("API Key").font(.subheadline).foregroundStyle(.secondary)
+                                SecureField("API Key（空白保留已有值）", text: $model.apiKey).focused($aiField, equals: .key).textInputAutocapitalization(.never).autocorrectionDisabled()
+                            }
+                            DisclosureGroup("端点格式与服务说明") {
+                                Text("OpenAI: /v1/responses\n兼容网关: /v1/chat/completions\nAnthropic: https://api.anthropic.com/v1/messages\nGemini: https://generativelanguage.googleapis.com/v1beta/models/模型ID:generateContent\nGemini 模型以 URL 中的 ID 为准。模型是否支持截图、计费和数据保留由供应商决定。").font(.caption)
+                            }
+                            if model.configuration.provider == "openai" {
+                                Toggle("确认此兼容端点与模型支持图片，且我获准用于此用途", isOn: Binding(get: { model.configuration.gatewayVisionConfirmed == true }, set: { model.configuration.gatewayVisionConfirmed = $0 }))
+                            }
+                        }
                     }
-                    }
-                    Toggle("允许所选 AI 规划任务文字", isOn: Binding(
+                    Section("任务文字权限") {
+                        Toggle("允许所选 AI 规划任务文字", isOn: Binding(
                         get: { model.configuration.textPlanningConsent == true },
                         set: { model.configuration.textPlanningConsent = $0 }))
-                    Text("发送目标只做文本规划；截图上传与设备控制需要另行允许。任务文字会发送给所选服务。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Toggle("同意将广播中的屏幕截图发给所选服务", isOn: $model.configuration.uploadConsent)
-                    Text("会持续发送跨 App 截图；服务方可能保留图像。系统广播许可与此上传同意是两回事。撤回后请立即停止会话。ChatGPT 套餐与 API Key 是独立路径；不会静默切换到 API 计费。").font(.caption).foregroundStyle(.secondary)
-                }
+                        Text("发送目标只做文本规划；截图上传与设备控制需要另行允许。任务文字会发送给所选服务。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 if safety {
-                Section("可选后台协调 · iOS26") {
-                    if #available(iOS 26.0, *) {
-                        Toggle("启用有界后台会话并同意临时本地存帧", isOn: Binding(get: { model.configuration.continuedProcessingEnabled == true }, set: { model.configuration.continuedProcessingEnabled = $0 }))
+                    Section("截图上传") {
+                        LabeledContent("接收服务", value: model.configuration.provider == "chatgpt-plan" ? "OpenAI · ChatGPT 套餐" : (URL(string: model.configuration.endpoint)?.host ?? "尚未配置"))
+                        Toggle("同意将广播中的屏幕截图发给所选服务", isOn: $model.configuration.uploadConsent)
+                        Text("会持续发送跨 App 截图；服务方可能保留图像。系统广播许可与此上传同意是两回事。撤回后请立即停止会话。ChatGPT 套餐与 API Key 是独立路径；不会静默切换到 API 计费。").font(.caption).foregroundStyle(.secondary)
                     }
-                    Text("默认由广播扩展直接处理AI与硬件。可选模式通过系统BGContinuedProcessingTask在主App执行真实AI/动作调度，扩展每秒覆盖一份受保护的最新截图供读取，停止后删除。系统可能拒绝或终止，不保证永久保活或每步刷新；强退后租约失效会停止。需真机验收。").font(.caption).foregroundStyle(.secondary)
-                }
-                Section("系统权限") {
-                    Button("打开系统权限设置", systemImage: "gearshape") {
-                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                    Section("系统权限") {
+                        Button("打开系统权限设置", systemImage: "gearshape") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                        }
+                        Text("麦克风和语音识别仅用于听写草稿；屏幕广播仍需每次由系统确认。")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
-                    Text("麦克风和语音识别仅用于听写草稿；屏幕广播仍需每次由系统确认。")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Section("安全与节奏") {
+                        Stepper("最大 \(model.configuration.maxSteps) 步", value: $model.configuration.maxSteps, in: 1...50)
+                        Toggle("允许低风险导航点击和搜索框 ASCII 输入", isOn: $model.configuration.allowLowRiskNavigation)
+                        Text("默认谨慎模式仅自动相对移动/滚动，点击和输入交给人工。开启后允许单步导航，不允许提交消息、购买、支付、删除、授权或密码。模型与关键词防线不是安全保证；截图可含误导信息。不能无人值守。").font(.caption).foregroundStyle(.secondary)
+                        Text("单次会话上限5分钟；截图超过15秒禁止执行；只允许一个动作在途；失败即暂停；不自动重试动作。").font(.caption)
+                    }
+                    Section("高级后台选项") {
+                        DisclosureGroup("后台协调 · iOS 26") {
+                            if #available(iOS 26.0, *) {
+                                Toggle("启用有界后台会话并同意临时本地存帧", isOn: Binding(get: { model.configuration.continuedProcessingEnabled == true }, set: { model.configuration.continuedProcessingEnabled = $0 }))
+                            }
+                            Text("默认由广播扩展直接处理AI与硬件。可选模式通过系统BGContinuedProcessingTask在主App执行真实AI/动作调度，扩展每秒覆盖一份受保护的最新截图供读取，停止后删除。系统可能拒绝或终止，不保证永久保活或每步刷新；强退后租约失效会停止。需真机验收。").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
                 }
-                Section("安全与节奏") {
-                    Stepper("最大 \(model.configuration.maxSteps) 步", value: $model.configuration.maxSteps, in: 1...50)
-                    Toggle("允许低风险导航点击和搜索框 ASCII 输入", isOn: $model.configuration.allowLowRiskNavigation)
-                    Text("默认谨慎模式仅自动相对移动/滚动，点击和输入交给人工。开启后允许单步导航，不允许提交消息、购买、支付、删除、授权或密码。模型与关键词防线不是安全保证；截图可含误导信息。不能无人值守。").font(.caption).foregroundStyle(.secondary)
-                    Text("单次会话上限5分钟；截图超过15秒禁止执行；只允许一个动作在途；失败即暂停；不自动重试动作。").font(.caption)
+                if !safety {
+                    Section("高级") {
+                        Button("管理模型档案", systemImage: "square.stack.3d.up") { showProfiles = true }
+                        DisclosureGroup("凭据管理") {
+                            Text("删除会同时清除当前 AI 端点的 API Key 与当前设备 Token。ChatGPT 登录需在账户区域单独退出。").font(.caption).foregroundStyle(.secondary)
+                            Button("删除当前 AI 与设备凭据", role: .destructive) { showDelete = true }
+                        }
+                    }
                 }
+                Section("操作反馈") {
+                    PilotSettingsNotice(message: model.notice)
                 }
-                Section {
-                    if !safety { Button("删除已存密钥", role: .destructive) { showDelete = true } }
-                    Text(model.notice).font(.footnote)
-                }
-            }.buttonStyle(.bordered).disabled(model.isSessionActive || model.probing)
+            }.disabled(model.isSessionActive || model.probing)
                 .environment(\.defaultMinListRowHeight, 56)
                 .scrollDismissesKeyboard(.interactively)
                 .scrollContentBackground(.hidden)
@@ -638,20 +677,26 @@ struct ConfigurationDetailView: View {
                 .onChange(of: model.configuration.deviceURL) { _, _ in model.lastDeviceStatus = nil; model.deviceSummary = "设备地址已修改，请重新检查"; model.configuration.relativeModeConfirmed = false }
                 .navigationTitle(safety ? "权限与安全" : "AI 账户").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        if model.isSessionActive {
-                            Button("停止并撤回上传", role: .destructive) { Task { await model.stopAndRevokeConsent() } }
-                        } else { Button("返回") { aiField = nil; dismiss() } }
-                    }
-                    ToolbarItem(placement: .confirmationAction) { Button("保存") { aiField = nil; if model.save() { dismiss() } }.disabled(model.isSessionActive) }
+                ToolbarItem(placement: .cancellationAction) {
+                    if model.isSessionActive {
+                        Button("停止并撤回上传", role: .destructive) { Task { await model.stopAndRevokeConsent() } }
+                    } else { Button("返回") { aiField = nil; dismiss() } }
                 }
+                ToolbarItem(placement: .confirmationAction) { Button("保存", action: saveSettings).disabled(model.isSessionActive) }
+            }
                 .safeAreaInset(edge: .bottom) {
-                    if model.isSessionActive { Text("会话运行中不能编辑；先停止再修改。顶部可立即请求停止并撤回上传。").font(.caption).padding().background(PilotPalette.canvas) }
-                }
+                if model.isSessionActive { Text("会话运行中不能编辑；先停止再修改。顶部可立即请求停止并撤回上传。").font(.caption).padding().background(PilotPalette.canvas) }
+            }
+                .sheet(isPresented: $showProfiles) { ProfilesView() }
                 .confirmationDialog("删除当前端点和设备的两项凭据？", isPresented: $showDelete) {
-                    Button("删除密钥", role: .destructive) { model.deleteSecrets() }
-                }
+                Button("删除密钥", role: .destructive) { model.deleteSecrets() }
+            }
         }
+    }
+    private func saveSettings() {
+        aiField = nil
+        if model.save() { dismiss() }
+        else { saveError = model.notice }
     }
 }
 
@@ -668,7 +713,7 @@ struct CalibrationView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 26) {
+                VStack(alignment: .leading, spacing: 24) {
                     progressSteps
                     Text(completed ? "指针已准备好" : unavailable ? "还需要检查一下" : model.automaticCalibration.isAwaitingMarker ? "点一下实际指针中心" : needsMarkers ? "点出指针，计算自动完成" : "让我检查一下指针")
                         .font(.title.bold())
@@ -721,7 +766,7 @@ struct CalibrationView: View {
                 }.buttonStyle(.borderedProminent)
                     .tint(busy ? .red : PilotPalette.accent)
                     .disabled(!busy && !completed && !unavailable && model.isSessionActive)
-                    .padding(24).background(PilotPalette.canvas)
+                    .padding(24).frame(maxWidth: 540).frame(maxWidth: .infinity).background(PilotPalette.canvas)
             }
             .navigationTitle("指针校准").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { PilotCloseButton { dismiss() } } }

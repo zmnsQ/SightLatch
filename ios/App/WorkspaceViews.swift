@@ -4,16 +4,12 @@ import UIKit
 
 struct WorkspaceHubView: View {
     @EnvironmentObject private var model: PilotViewModel
-    @State private var showOnboarding = false
-    @State private var showProfiles = false
-    @State private var showTasks = false
     @State private var showTransfer = false
     @State private var confirmRecovery = false
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    Button("模型档案 · \(model.selectedProfileName)", systemImage: "square.stack.3d.up") { showProfiles = true }
                     Button("设置迁移与脱敏诊断", systemImage: "square.and.arrow.up") { showTransfer = true }
                 }
                 Section("恢复建议") {
@@ -27,13 +23,8 @@ struct WorkspaceHubView: View {
                         Button("保留旧文件副本并重置工作区", role: .destructive) { confirmRecovery = true }.disabled(model.stopping)
                     }
                 }
-                Section("构建状态") {
-                    Text("功能源码正在完善。Linux可做的检查与iPhone实际验证不同；此界面不代表已通过iOS编译或真机验收。").font(.caption)
-                }
             }.navigationTitle("高级与数据")
-                .sheet(isPresented: $showOnboarding) { OnboardingView() }
-                .sheet(isPresented: $showProfiles) { ProfilesView() }
-                .sheet(isPresented: $showTasks) { TaskLibraryView() }
+                .modifier(PilotSettingsPageStyle())
                 .sheet(isPresented: $showTransfer) { TransferView() }
                 .confirmationDialog("停止会话并重置配置与任务库？", isPresented: $confirmRecovery, titleVisibility: .visible) {
                     Button("保留旧文件副本并重置", role: .destructive) { Task { await model.recoverDamagedSettings() } }
@@ -116,7 +107,7 @@ struct OnboardingView: View {
                 .font(.title3)
             Text("广播会持续发送跨 App 截图，服务方可能保留图像。上传同意需要你在 AI 账户页主动开启，系统广播还需单独确认。ChatGPT 套餐和 API 计费是独立路径。")
                 .foregroundStyle(.secondary)
-            Button("设置 AI 与上传同意", systemImage: "sparkles") { showAI = true }.buttonStyle(.bordered)
+            Button("设置 AI 账户", systemImage: "sparkles") { showAI = true }.buttonStyle(.bordered)
         default:
             Text("先校准指针，再从安全页面尝试一个小任务。")
                 .font(.title3)
@@ -207,7 +198,6 @@ struct ProfilesView: View {
     @State private var name = ""
     @State private var deleting: ModelProfile?
     @State private var showGateway = false
-    @State private var showSettings = false
     var body: some View {
         NavigationStack {
             List {
@@ -233,16 +223,16 @@ struct ProfilesView: View {
                     TextField("档案名称", text: $name)
                     Button("更新当前档案") { model.saveCurrentProfile(name: name) }
                     Button("另存为新档案") { model.saveCurrentProfile(name: name, asNew: true) }
-                    Button("编辑当前模型与密钥") { showSettings = true }
+                    Text("模型与密钥请返回 AI 账户修改，再保存为档案。").font(.caption).foregroundStyle(.secondary)
                 }.disabled(model.isSessionActive)
                 Section("兼容网关与凭据") {
-                    Text("自管网关使用OpenAI兼容协议，填写完整HTTPS chat/completions URL。上游订阅授权、图片支持和条款由网关负责；本App没有假冒的ChatGPT/Codex OAuth入口。")
+                    Text("自管网关使用OpenAI兼容协议，填写完整HTTPS chat/completions URL。上游订阅授权、图片支持和条款由网关负责；ChatGPT 套餐登录请返回 AI 账户选择对应服务。")
                     Text("每个provider+端点共享一项Keychain凭据；不同模型使用同一端点时也共用该密钥。移除档案不会自动删除可能被其他档案使用的密钥。")
                     Text(model.notice).foregroundStyle(.secondary)
                 }.font(.caption)
             }.navigationTitle("模型档案")
+                .modifier(PilotSettingsPageStyle())
                 .sheet(isPresented: $showGateway) { GatewaySetupView() }
-                .sheet(isPresented: $showSettings) { ConfigurationDetailView(safety: false) }
                 .confirmationDialog("移除这个配置档案？Keychain凭据会保留。", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
                     Button("移除档案", role: .destructive) { if let deleting { model.removeProfile(deleting) }; deleting = nil }
                 }
@@ -281,7 +271,7 @@ struct TaskLibraryView: View {
                     }.padding(.vertical, 6)
                 }
                 if records.isEmpty { ContentUnavailableView("暂无记录", systemImage: "tray", description: Text("在主页写下任务，然后加入待办。")) }
-                Section { Text(model.notice).font(.caption) }
+                Section("操作反馈") { PilotSettingsNotice(message: model.notice) }
             }.navigationTitle("任务库")
                 .confirmationDialog("删除这条任务和历史？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
                     Button("删除", role: .destructive) { if let deleting { model.removeTask(deleting.id) }; deleting = nil }
@@ -315,9 +305,10 @@ struct TransferView: View {
                         catch { exportError = error.localizedDescription }
                     }
                 }
-                if let exportError { Section("提示") { Text(exportError).textSelection(.enabled) } }
-                Section { Text(model.notice).font(.caption) }
+                if let exportError { Section("操作失败") { PilotSettingsNotice(message: exportError, isError: true) } }
+                Section("操作反馈") { PilotSettingsNotice(message: model.notice) }
             }.navigationTitle("迁移与诊断")
+                .modifier(PilotSettingsPageStyle())
                 .fileExporter(isPresented: $exporting, document: document, contentType: .json, defaultFilename: filename) { result in
                     switch result {
                     case .success: model.notice = "文件已交给系统保存；未发送到任何外部服务。"
@@ -358,9 +349,45 @@ struct GatewaySetupView: View {
                         model.configureGateway(name: name, endpoint: endpoint, modelID: modelID, key: key, visionConfirmed: visionConfirmed)
                         key = ""
                     }.disabled(model.isSessionActive || endpoint.isEmpty || modelID.isEmpty || !visionConfirmed)
-                    Text(model.notice).font(.caption).textSelection(.enabled)
+                    PilotSettingsNotice(message: model.notice)
                 }
             }.navigationTitle("兼容网关")
+                .modifier(PilotSettingsPageStyle())
+        }
+    }
+}
+
+/// Shared secondary-page chrome; never disables the navigation or emergency actions.
+struct PilotSettingsPageStyle: ViewModifier {
+    @Environment(\.dismiss) private var dismiss
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.defaultMinListRowHeight, 56)
+            .navigationBarTitleDisplayMode(.inline)
+            .scrollDismissesKeyboard(.interactively)
+            .scrollContentBackground(.hidden)
+            .background(PilotPalette.canvas)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    PilotCloseButton { dismiss() }
+                }
+            }
+    }
+}
+
+struct PilotSettingsNotice: View {
+    let message: String
+    var isError = false
+
+    var body: some View {
+        if !message.isEmpty {
+            Label(message, systemImage: isError ? "exclamationmark.circle" : "info.circle")
+                .font(.footnote)
+                .foregroundStyle(isError ? Color.red : Color.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         }
     }
 }

@@ -36,7 +36,10 @@ class ChatRefinement(unittest.TestCase):
         self.assertIn('Text(model.probeState.message)',panel)
         self.assertIn('DeviceProbeResultView()', panel)
         self.assertIn('model.cancelProbe()', panel)
-        self.assertIn('Button("紧急停止控制", role: .destructive)',panel)
+        device = self.home.split("struct DeviceSettingsView:", 1)[1].split("struct DeviceControlPanel:", 1)[0]
+        self.assertIn('Button("紧急停止", systemImage: "stop.circle", role: .destructive)', device)
+        self.assertIn(".disabled(model.stopping)", device)
+        self.assertNotIn('Button("紧急停止控制"', panel)
         self.assertIn('.disabled(model.stopping)',panel)
     def test_control_requires_distinct_explicit_permission(self):
         self.assertIn('model.allowPlannedTask(requestID: requestID)', self.home)

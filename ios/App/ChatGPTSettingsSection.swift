@@ -9,7 +9,7 @@ struct ChatGPTSettingsSection: View {
     @State private var modelError = ""
     var body: some View {
         Section("ChatGPT 套餐（实验性）") {
-            Text("官方开源客户端登录；仍需真机验证系统浏览器与本地回调。API Key 方式保留，不会自动切换计费。")
+            Text("使用系统浏览器登录 ChatGPT。套餐与 API Key 独立，不会自动切换计费。")
                 .font(.caption).foregroundStyle(.secondary)
             Text(auth.status).font(.caption)
             if !auth.accountLabel.isEmpty { Text(auth.accountLabel).font(.caption).textSelection(.enabled) }
@@ -55,7 +55,7 @@ struct ChatGPTSettingsSection: View {
                 }.disabled(model.isSessionActive || auth.isSigningIn)
             }
             if loadingModels { ProgressView() }
-            if !modelError.isEmpty { Text(modelError).font(.caption).foregroundStyle(.red) }
+            if !modelError.isEmpty { PilotSettingsNotice(message: modelError, isError: true) }
             Link("查看和管理 ChatGPT 用量", destination: URL(string: "https://chatgpt.com/settings/usage")!)
             Link("Sign in with ChatGPT 条款", destination: URL(string: "https://openai.com/policies/sign-in-with-chatgpt-terms/")!)
             Text("登录授权会分享基本账户信息。屏幕任务会向 OpenAI 发送任务与所选截图；截图上传仍需单独同意。额度以 ChatGPT 设置为准。")
