@@ -3,22 +3,21 @@ import Foundation
 enum SecretStore { static func load(_ account: String) throws -> String { "mock" }; static func save(_ value: String, account: String) throws {} }
 enum AddressPolicy { static func device(_ value: String) throws -> URL { URL(string: value)! } }
 extension PilotConfiguration { func validate() throws {} }
-struct DeviceStatus {
-    var hid_connected = true, busy = false, armed = false
-    var boot_id = "boot", session_id = "session", control_epoch: String? = "epoch"
-    var supportsSoftwareControl = true
-    var control_lease_mode: String? = "none"
-    var lease_remaining_ms: Int? = 60_000
-}
-@MainActor final class SharedStore {
-    static let shared = SharedStore()
-    var stopGeneration = 0
-    var configuration = PilotConfiguration()
-    func write(_ value: PilotConfiguration, to: String) throws { configuration = value }
+extension DeviceStatus {
+    static func calibrationFixture() -> DeviceStatus {
+        // Decode the real wire type so mocks cannot hide production type/capability drift.
+        let json = """
+        {"ok":true,"boot_id":"boot","uptime_ms":0,"armed":false,
+         "hid_connected":true,"session_id":"session","next_sequence":1,"busy":false,
+         "control_mode":"software","control_epoch":"epoch",
+         "control_lease_mode":"none","lease_remaining_ms":60000}
+        """
+        return try! JSONDecoder().decode(DeviceStatus.self, from: Data(json.utf8))
+    }
 }
 @MainActor struct HardwareClient {
     let configuration: PilotConfiguration
-    static var device = DeviceStatus()
+    static var device = DeviceStatus.calibrationFixture()
     static var calls: [String] = []
     static var armDelay: UInt64 = 0
     static var failStop = false
@@ -57,6 +56,7 @@ struct DeviceStatus {
 @main struct CalibrationTests {
     @MainActor static func main() async throws {
         let model = PilotViewModel()
+        precondition(SharedStore.shared.stopGeneration == nil)
         precondition(!model.configuration.relativeModeConfirmed && model.configuration.model.isEmpty)
         HardwareClient.device.control_lease_mode = nil
         await model.beginPointerCalibration()
@@ -64,6 +64,7 @@ struct DeviceStatus {
         HardwareClient.device.control_lease_mode = "none"
         await model.beginPointerCalibration()
         precondition(model.calibrationActive, "First-time calibration must not require a model or previous calibration")
+        precondition(model.calibrationFlow.stopGeneration == nil, "A missing persisted STOP fence is a valid initial snapshot")
         precondition(!model.taskFlow.consumePermission(goal: "unplanned"))
         precondition(!model.confirmPointerCalibration())
         let before = HardwareClient.calls.filter { $0 == "move" }.count
@@ -76,6 +77,7 @@ struct DeviceStatus {
         precondition(model.calibrationFlow.phase == .finished && !HardwareClient.device.armed)
         precondition(!model.configuration.relativeModeConfirmed, "Stopping is not user confirmation")
         precondition(model.confirmPointerCalibration() && model.configuration.relativeModeConfirmed)
+        precondition(SharedStore.shared.configuration.relativeModeConfirmed, "Confirmation must persist through the production store")
         precondition(!model.taskFlow.consumePermission(goal: "unplanned"))
         // Closing during an in-flight ARM must drain the late reply and STOP again.
         HardwareClient.armDelay = 100_000_000
@@ -96,11 +98,24 @@ struct DeviceStatus {
         HardwareClient.device.boot_id = "rebooted"
         await model.moveCalibrationPointer(dx: 10, dy: 0)
         precondition(!HardwareClient.device.armed && !model.calibrationActive)
+        // A cross-process STOP changes the persisted optional UUID fence, not an integer counter.
+        try SharedStore.shared.invalidatePendingStarts()
+        let fence = SharedStore.shared.stopGeneration
+        precondition(fence != nil && UUID(uuidString: fence!) != nil)
+        await model.beginPointerCalibration()
+        precondition(model.calibrationActive && model.calibrationFlow.stopGeneration == fence)
+        try SharedStore.shared.invalidatePendingStarts()
+        precondition(SharedStore.shared.stopGeneration != fence)
+        let movesBeforeStop = HardwareClient.calls.filter { $0 == "move" }.count
+        await model.moveCalibrationPointer(dx: 10, dy: 0)
+        precondition(HardwareClient.calls.filter { $0 == "move" }.count == movesBeforeStop,
+                     "A changed persisted STOP fence must block calibration movement")
+        precondition(!HardwareClient.device.armed && !model.calibrationActive)
         await model.beginPointerCalibration()
         HardwareClient.failStop = true
         await model.endPointerCalibration()
         precondition(model.calibrationFlow.phase == .error && !model.confirmPointerCalibration())
         HardwareClient.failStop = false
-        print("PASS: real calibration extension with mocked hardware: first-use entry without AI/calibration, task remains unauthorized, bounded single-axis move, stop before explicit user confirmation, cancelled late ARM drained, expiry/reboot/failed STOP fail closed; no real hardware/API")
+        print("PASS: production calibration, DeviceStatus and SharedStore with mocked hardware: first-use entry, bounded movement, persisted confirmation, cancelled late ARM drained, optional UUID STOP fence blocks stale movement, expiry/reboot/failed STOP fail closed; no real hardware/API")
     }
 }

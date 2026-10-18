@@ -9,7 +9,7 @@ struct PointerCalibrationState {
     var bootID = ""
     var sessionID = ""
     var controlEpoch: String?
-    var stopGeneration = 0
+    var stopGeneration: String?
     var moved = false
     var deviceURL = ""
     var isBusy: Bool { [.starting, .active, .stopping].contains(phase) }

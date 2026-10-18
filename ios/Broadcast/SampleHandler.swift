@@ -3,7 +3,13 @@ import CoreImage
 import ImageIO
 import UniformTypeIdentifiers
 
-final class SampleHandler: RPBroadcastSampleHandler {
+// ReplayKit invokes entry points on framework-owned threads. Every mutable field below,
+// including CIContext use, is confined to `queue`; async work uses immutable snapshots
+// and re-enters that queue before reading or mutating capture state. `store` is immutable
+// and SharedStore serializes its file operations on its own queue (plus cross-process locks).
+// This explicit queue confinement is the Sendable invariant, not permission to access
+// capture state from Task closures. Keep the preconditions on queue-only helpers.
+final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
     private let queue = DispatchQueue(label: "HIDPilot.capture")
     private let context = CIContext(options: [.cacheIntermediates: false])
     private var work: Task<Void, Never>?
@@ -48,6 +54,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
     }
 
     private func pollControl() {
+        dispatchPrecondition(condition: .onQueue(queue))
         guard !stopped else { return }
         guard store.configuration.uploadConsent, let command = store.command, command.id == sessionID, command.running else {
             stopAndFinish("用户停止会话"); return
@@ -76,14 +83,16 @@ final class SampleHandler: RPBroadcastSampleHandler {
         let orientation = (CMGetAttachment(sampleBuffer, key: RPVideoSampleOrientationKey as CFString,
                                            attachmentModeOut: nil) as? NSNumber)?.int32Value ?? 1
         let sampledAt = Date()
-        // Keep at most one queued frame observation every 300ms, including during AI inference.
+        // Keep at most one frame observation every 300ms, including during AI inference.
         let observe = queue.sync { () -> Bool in
             guard !stopped, !paused, Date().timeIntervalSince(observationEnqueuedAt) >= 0.3 else { return false }
             observationEnqueuedAt = Date()
             return true
         }
         guard observe else { return }
-        queue.async { [weak self] in
+        // ReplayKit owns the sample-buffer lifetime. Finish pixel reads/encoding before
+        // this callback returns; only copied JPEG/fingerprint values enter async work.
+        queue.sync { [weak self] in
             guard let self else { return }
             guard !self.stopped, !self.paused else { return }
             let oriented = CIImage(cvPixelBuffer: pixelBuffer).oriented(forExifOrientation: orientation)
@@ -146,11 +155,17 @@ final class SampleHandler: RPBroadcastSampleHandler {
                         throw PilotError.message("规划期间画面变化或没有新帧，旧动作已丢弃。")
                     }
                     if let reason = SafetyGate.rejection(proposal, task: command.task, config: configuration) {
-                        self.queue.async { self.pause("\(reason)。提案：\(proposal.description)。请在目标 App 人工完成后回此 App 确认。") }
+                        self.queue.async {
+                            guard !self.stopped, !self.paused, self.generation == capturedGeneration else { return }
+                            self.pause("\(reason)。提案：\(proposal.description)。请在目标 App 人工完成后回此 App 确认。")
+                        }
                         await hardware.stop(); return
                     }
                     if proposal.type == .done {
-                        self.queue.async { self.stopAndFinish("AI 认为任务完成；请人工确认实际结果", phase: "完成") }; return
+                        self.queue.async {
+                            guard !self.stopped, !self.paused, self.generation == capturedGeneration else { return }
+                            self.stopAndFinish("AI 认为任务完成；请人工确认实际结果", phase: "完成")
+                        }; return
                     }
                     if proposal.type == .wait {
                         self.queue.async {
@@ -193,9 +208,15 @@ final class SampleHandler: RPBroadcastSampleHandler {
                         return self.agent?.recoverBeforeDispatch(reason) == true
                     }
                     if canRecover {
-                        self.queue.async { self.publish("观察", "本轮未执行，等待新画面重新规划（最多重试两次）"); self.lastCapture = Date() }
+                        self.queue.async {
+                            guard !self.stopped, !self.paused, self.generation == capturedGeneration else { return }
+                            self.publish("观察", "本轮未执行，等待新画面重新规划（最多重试两次）"); self.lastCapture = Date()
+                        }
                     } else {
-                        self.queue.async { self.pause(error.localizedDescription) }
+                        self.queue.async {
+                            guard !self.stopped, !self.paused, self.generation == capturedGeneration else { return }
+                            self.pause(error.localizedDescription)
+                        }
                         let cleanup = Task.detached { await HardwareClient(configuration: configuration).stop() }
                         await cleanup.value
                     }
@@ -209,7 +230,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
             guard let self else { return }
             if self.config.continuedProcessingEnabled == true { self.stopAndFinish("系统广播暂停，后台会话结束"); return }
             self.work?.cancel(); self.pause("系统广播暂停；请回主 App 重新确认并物理 ARM")
-            Task { await HardwareClient(configuration: self.config).stop() }
+            self.stopHardware()
         }
     }
     override func broadcastResumed() {
@@ -222,11 +243,12 @@ final class SampleHandler: RPBroadcastSampleHandler {
             self.stopped = true; self.work?.cancel(); self.timer?.cancel(); self.timer = nil
             self.endCaptureSession()
             if self.store.status.phase != "完成" { self.publish("停止", "系统广播已结束") }
-            Task { await HardwareClient(configuration: self.config).stop() }
+            self.stopHardware()
         }
     }
     // Conservative coarse change detector, not a proof of UI/target identity.
     private func fingerprint(_ source: CIImage) -> [UInt8] {
+        dispatchPrecondition(condition: .onQueue(queue))
         let bounds = source.extent
         let transformed = source.transformed(by: CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY))
             .transformed(by: CGAffineTransform(scaleX: 32 / bounds.width, y: 32 / bounds.height))
@@ -239,17 +261,20 @@ final class SampleHandler: RPBroadcastSampleHandler {
         return pixels
     }
     private func frameIsStable(comparedTo prior: [UInt8]) -> Bool {
+        dispatchPrecondition(condition: .onQueue(queue))
         guard !prior.isEmpty, prior.count == latestFingerprint.count, Date().timeIntervalSince(latestObservedAt) < 1.5 else { return false }
         let difference = zip(prior, latestFingerprint).reduce(0) { $0 + abs(Int($1.0) - Int($1.1)) }
         return Double(difference) / Double(prior.count * 255) < 0.015
     }
     private func pause(_ reason: String) {
+        dispatchPrecondition(condition: .onQueue(queue))
         guard !stopped else { return }
         paused = true
         store.log("暂停：\(reason)", sessionID: sessionID)
         publish("暂停", reason)
     }
     private func publish(_ phase: String, _ detail: String) {
+        dispatchPrecondition(condition: .onQueue(queue))
         guard store.command?.id == sessionID else { return }
         let current = store.status
         if config.continuedProcessingEnabled == true, current.sessionID == sessionID,
@@ -258,17 +283,25 @@ final class SampleHandler: RPBroadcastSampleHandler {
         try? store.write(PilotStatus(phase: phase, detail: detail, steps: steps, sessionID: sessionID), to: "status.json")
     }
     private func endCaptureSession() {
+        dispatchPrecondition(condition: .onQueue(queue))
         // Both modes must revoke the command without relying on the main app being foregrounded.
-        try? store.updateCommand(sessionID: sessionID) { $0.running = false }
+        _ = try? store.updateCommand(sessionID: sessionID) { $0.running = false }
         if let frame = store.read("frame.json", as: SharedFrame.self), frame.sessionID == sessionID { store.remove("frame.json") }
         if let lease = store.read("lease.json", as: ExecutionLease.self), lease.sessionID == sessionID { store.remove("lease.json") }
     }
+    private func stopHardware() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        // Snapshot before leaving the queue. A later start must not redirect this STOP.
+        let configuration = config
+        Task { await HardwareClient(configuration: configuration).stop() }
+    }
     private func stopAndFinish(_ reason: String, phase: String = "停止") {
+        dispatchPrecondition(condition: .onQueue(queue))
         guard !stopped else { return }
         stopped = true; work?.cancel(); timer?.cancel(); timer = nil
         endCaptureSession()
         publish(phase, reason)
-        Task { await HardwareClient(configuration: config).stop() }
+        stopHardware()
         finishBroadcastWithError(PilotError.message(reason))
     }
 }

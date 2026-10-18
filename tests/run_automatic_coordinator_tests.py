@@ -2,14 +2,11 @@
 """Compile production coordinator/calibration extension with fake device and direct marked-position inputs, no UIKit/network."""
 from pathlib import Path
 import tempfile, subprocess, os
+from calibration_test_support import write_production_sources
 root=Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory() as tmp:
  p=Path(tmp)
- models=(root/'ios/Shared/Models.swift').read_text()
- modelTypes='struct PointerCalibrationContext:'+models.split('struct PointerCalibrationContext:',1)[1].split('struct SessionCommand:',1)[0]
- action='struct ActionProposal:'+models.split('struct ActionProposal:',1)[1].split('struct LogEntry:',1)[0]
- error='enum PilotError:'+models.split('enum PilotError:',1)[1].split('struct SharedFrame:',1)[0]
- (p/'Models.swift').write_text('import Foundation\n'+modelTypes+action+error)
+ production_sources=write_production_sources(root,p)
  coordinator=(root/'ios/App/PilotAutomaticCalibration.swift').read_text().replace('import UIKit','')
  coordinator=coordinator.split('    func validateAutomaticCalibrationContext()',1)[0]+'}\n'
  coordinator=coordinator.replace('UIDevice.current.userInterfaceIdiom == .phone','true')
@@ -66,6 +63,6 @@ with tempfile.TemporaryDirectory() as tmp:
 }
 '''
  (p/'Mocks.swift').write_text(mock)
- files=[str(p/'Models.swift'),str(root/'ios/Shared/TaskPlanning.swift'),str(root/'ios/Shared/PointerCalibration.swift'),str(root/'ios/Shared/AutomaticCalibration.swift'),str(root/'ios/App/PilotPointerCalibration.swift'),str(p/'Coordinator.swift'),str(p/'Mocks.swift')]
+ files=[*[str(path) for path in production_sources],str(root/'ios/Shared/TaskPlanning.swift'),str(root/'ios/Shared/PointerCalibration.swift'),str(root/'ios/Shared/AutomaticCalibration.swift'),str(root/'ios/App/PilotPointerCalibration.swift'),str(p/'Coordinator.swift'),str(p/'Mocks.swift')]
  subprocess.run([os.environ.get('SWIFTC','swiftc'),'-module-cache-path',str(p/'cache'),*files,'-o',str(p/'test')],check=True)
- subprocess.run([str(p/'test')],check=True,timeout=20)
+ subprocess.run([str(p/'test')],check=True,timeout=20,env={**os.environ,'SIGHTLATCH_TEST_STORE':str(p/'store')})
