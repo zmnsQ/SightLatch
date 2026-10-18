@@ -1,93 +1,90 @@
-# SightLatch：第一次安装与使用
+# SightLatch：ESP32-C3 第一次安装与使用
 
-这份指南对应仓库现有代码和界面。先完成“手机安装 → 硬件配对 → 手动测试”，最后再启动 AI。源码尚未通过 Apple SDK 编译、签名安装或 ESP32 / iPhone 实机联调；遇到报错请保留具体错误，不要把下面的步骤当作已验证兼容承诺。
+这条主线适用于 **ESP32-C3、至少 4MB Flash、无外接 GPIO 按钮**。只需开发板与 USB 数据线，不必复制 `config.h`，也不必安装 Arduino IDE。旧 S3 手动构建在文末另列，不能照搬到 C3。
 
-## 先准备这些
+当前已做云端构建与软件检查，**尚未通过 iPhone / 实际板子联调**，iOS Apple SDK 编译也未验证。首次请使用不含隐私的测试画面，保留首个完整报错。
 
-- 一台用于 Xcode 的 Mac，以及 Xcode 26 或更新的兼容版本。本项目已经包含 Xcode 工程，不需要额外项目生成器。
-- 一部自己的 iPhone。工程部署下限是 iOS 18；完整液态玻璃界面需要 iOS 26。两个系统版本的真机效果都尚未验证。
-- ESP32-S3 开发板、支持数据传输的 USB 线，以及两个常开按钮。先核实具体板子的 GPIO 引脚图。
-- iPhone 与 ESP32 可互通的可信、最好隔离的局域网；板子需要 2.4 GHz Wi-Fi。
-- 可用的 Apple 开发签名，以及支持图片输入的模型 API。ChatGPT 等聊天产品的订阅不是 API 额度。
+## 准备
 
-整体路径：iPhone 的屏幕广播扩展取得图像 → 选定的 AI API 分析 → iPhone 通过局域网向 ESP32 发单步指令 → ESP32 通过蓝牙 HID 操作同一部 iPhone。没有要求 Mac 常驻转发；Mac 用于编译、安装和烧录。
+- Mac、Xcode 26 或更新的兼容版本；iPhone 部署下限 iOS 18，完整液态玻璃界面需 iOS 26。
+- 支持所需 App Groups / 共享 Keychain 能力的 Apple 签名账户。免费 Personal Team 可能不满足，以 Xcode 实际报错为准。
+- ESP32-C3 开发板、USB 数据线、电脑 Chrome 或 Edge。核对板厂规格：至少 4MB Flash，并确认是原生 USB Serial/JTAG 还是 USB-UART 接口。
+- iPhone 与板子互通的可信、最好隔离的局域网；板子连接 2.4GHz Wi-Fi。
+- 可用的视觉模型 API，或实验性 ChatGPT 套餐登录。两条计费路径互相独立，不会自动回退。
 
-## 1. 把 App 安装到 iPhone
+运行链路是：**iPhone 读屏 → 模型规划 → Wi-Fi HTTP 发给 C3 → BLE HID 操作 iPhone**。USB 用于烧录、首次配置和供电；运行时不需要 Mac 常驻转发，也不是全程蓝牙。
 
-1. 拉取仓库，在 `ios/Config/` 内复制 `Local.example.xcconfig` 为 `Local.xcconfig`。后者已被 Git 忽略，不要提交签名文件或个人配置。
-2. 在这个本地文件填写自己的 `DEVELOPMENT_TEAM`，并设置你实际拥有的唯一 `PILOT_BUNDLE_PREFIX`、`PILOT_APP_GROUP` 和 `PILOT_KEYCHAIN_GROUP`。Keychain 值保留 `$(AppIdentifierPrefix)`，不要凭猜测替换成 Team ID。示例中的 `com.yourcompany` 必须换成自己的注册标识。
-3. 用 Xcode 打开 `ios/HIDPilot.xcodeproj`，选择共享 scheme **HIDPilot**。内部工程名仍是 HIDPilot，安装后显示 **SightLatch**，无需因此重命名工程。
-4. 在 `HIDPilot`、`HIDPilotBroadcast`、`HIDPilotWidget` 三个 target 的 Signing & Capabilities 中选择同一个 Team。三个 target 使用相同 App Group；主 App 与 Broadcast 使用相同 Keychain access group。确认这些能力已在开发者账户和签名 profile 中生效。免费个人签名是否支持所需能力，以 Xcode 的实际结果为准。
-5. 选择连接的 iPhone，构建并运行主 App；它会嵌入两个扩展。如系统要求开发者模式、设备信任或签名信任，由你按系统提示完成。首次启动前先解锁手机。
+## 1. 安装 iPhone App
 
-如果编译失败，记录 Xcode 版本、首个完整错误和 target 名称。不要为了绕过错误删除 App Group / Keychain 权限，它们是扩展共享状态所必需的。
+1. 拉取仓库，直接打开 `ios/HIDPilot.xcodeproj`，选择共享 scheme **HIDPilot**。
+2. 在 `HIDPilot`、`HIDPilotBroadcast`、`HIDPilotWidget` 三个 target 的 Signing & Capabilities 选择同一个 Development Team，保持 **Automatically manage signing** 开启。
+3. 选择连接的 iPhone 并运行。系统要求开发者模式、设备信任或签名信任时，按系统提示完成。
 
-## 2. 烧录 ESP32-S3
+**不需要复制 `Local.example.xcconfig`，也不需要生成工程。** Bundle ID 与共享组会按 Team 派生。不要删 App Group / Keychain 权限绕过签名错误。已有安装请保留原 `Local.xcconfig`；更换标识可能变成新安装 / 新数据容器，不会自动迁移旧凭据。
 
-1. 在 Arduino IDE 安装 **Espressif Arduino-ESP32 3.3.5** 和 **ArduinoJson 7.0.4**，选择 **ESP32S3 Dev Module**。本固件使用该核心的 Bluedroid BLE；不要混入 NimBLE 库。USB、Flash、PSRAM 选项按你的具体板卡配置。
-2. 打开 `firmware/IPhoneHIDBridge/IPhoneHIDBridge.ino`，同目录的 `Bridge.cpp` 会参与构建。
-3. 复制 `config.example.h` 为 `config.h`，仅在本地填写 Wi-Fi 名称、密码和至少 32 字符的随机 `CONTROL_TOKEN`。不要把密码或 token 发到聊天、提交到 GitHub。占位配置不会开放 HID 执行。
-4. 断电后接两个常开按钮：默认 STOP 为 GPIO4 与 GND，ARM 为 GPIO5 与 GND，使用内部上拉。必须先对照开发板引脚定义；若这些引脚不适用，在本地配置里修改。
-5. 编译、上传，打开 115200 波特率串口查看设备局域网 IP。也可从路由器的 DHCP 列表确认。详细接线、配置与协议见 [固件说明](../firmware/README.md)。
+## 2. 打开烧录网页
 
-默认硬件处于 DISARMED，不能执行动作。设备控制使用局域网明文 HTTP；不要做公网端口映射，也不要在不可信公共 Wi-Fi 使用。
+目前 GitHub Pages 尚未启用，**没有已核验的线上烧录 URL**。推送代码不会自动部署网页。两种打开方式任选一种：
 
-## 3. 让 iPhone 识别蓝牙鼠标
+### 仓库拥有者启用在线入口
 
-1. 长按物理 ARM 约 2 秒，打开约 30 秒的配对窗口。
-2. iPhone 设置 → 辅助功能 → 触控 → 辅助触控，开启辅助触控，在“设备 / 蓝牙设备”中查找 **LocalHID** 并配对。具体菜单名称可能随 iOS 变化。
-3. 确认连接及系统指针后，短按 ARM（至少约 60 ms）才允许执行，授权窗口最多 5 分钟。
-4. 按 STOP 会停止并解除 ARM；恢复执行必须再次物理 ARM。断连不会自动重新广播。已连接时长按 ARM 会先断开，需要释放后再次长按来重新打开配对窗口。
+1. GitHub 仓库 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**。
+2. 到 **Actions → Publish USB installer (manual) → Run workflow**，选择要发布的分支并运行。
+3. 等部署成功，从该次任务的 deployment 输出打开真实网址。失败或未完成时不要猜测网站地址。
 
-本版本是 BLE 相对鼠标 / 键盘，不能当成任意绝对坐标触控注入，也没有多指手势。配对采用 Just Works，不提供强中间人防护。
+### 不等部署：在自己电脑本地打开
 
-## 4. 在 App 配好连接
+在仓库目录运行（需要已安装 Node.js / npm）：
 
-打开右上角“设置”，进入“连接与安全”：
+```sh
+cd web-installer
+npm ci
+npm run dev
+```
 
-- 设备地址填写 `http://hidbridge.local`，或刚查到的私网 IPv4，例如 `http://192.168.1.50`。设备 Bearer Token 必须与固件的 `CONTROL_TOKEN` 相同。
-- 点击“保存并检查局域网 / BLE”，在前台按系统提示允许局域网访问。看到检查失败时先排查网络、地址、token、蓝牙状态，不要直接开始 AI。
-- “协议”选择实际使用的服务，填完整 HTTPS 请求 URL、支持视觉的模型 ID 和 API Key。密钥在 App 本地输入，保存在设备 Keychain。
+用电脑 Chrome / Edge 打开终端打印的 localhost 地址。仓库已包含 C3 的两种预编译镜像，无需先编译固件。不要双击 `index.html` 用 `file://` 打开。详细说明见 [网页安装器](../web-installer/README.md)。
 
-常见请求 URL：
+## 3. 烧录并配置 C3
 
-- OpenAI Responses：`https://api.openai.com/v1/responses`
-- OpenAI 兼容：你获准使用的 HTTPS 地址，以 `/v1/chat/completions` 为例
-- Anthropic Messages：`https://api.anthropic.com/v1/messages`
-- Google Gemini：`https://generativelanguage.googleapis.com/v1beta/models/你的模型ID:generateContent`
+1. USB 连接开发板，在网页选择与板子接口相符的 **原生 USB** 或 **USB-UART** 镜像，再选择串口识别。选错接口可能仍能烧录，但之后无法接收 USB 配置。
+2. 确认识别结果为 ESP32-C3 且 Flash 至少 4MB，再确认擦除并安装。**整片 Flash 会被清空，包括旧程序、凭据和蓝牙绑定。**
+3. 按板载 RESET 或重新插 USB；原生 USB 端口可能重新出现，按网页提示重新选择。
+4. 在网页经 USB 填写 Wi-Fi 和至少 32 字符的随机控制令牌，等设备确认后读取 IP。妥善保存同一令牌供 App 使用，不要发到聊天或提交仓库。
 
-Gemini 使用 URL 中的模型 ID；切换协议不会自动更改 URL。更换端点时重新输入对应密钥。兼容服务还需要确认它支持图片且你有权使用。
+默认不上电接管、不自动开放配对。串口不会回显密码或令牌；NVS 未加密，拿到板子的人仍可能读取配置。硬件限制与接口选择见 [C3 说明](ESP32_C3_SETUP.zh-CN.md)。
 
-只有理解并同意后，才打开“同意将广播中的屏幕截图发给上述端点”。图像会发送给该模型服务，可能产生 API 费用，并受其数据保留政策影响；不是纯本地 AI 推理。项目目前没有 ChatGPT / Codex 或第三方订阅账户登录、额度转换功能。
+## 4. 配对并先测手动控制
 
-第一次保持“允许低风险导航点击和搜索框 ASCII 输入”关闭，也保持可选“有界后台会话”关闭。
+1. 在 App 点顶部设备状态，打开“设备设置”，填写 `http://设备IP`（例如 `http://192.168.1.50`）与相同令牌，点“检查设备状态”。按系统提示允许局域网访问。
+2. 点“开始蓝牙配对”，设备开放 30 秒窗口。在 iPhone 设置 → 辅助功能 → 触控 → 辅助触控中开启辅助触控，在设备 / 蓝牙设备中配对 **SightLatch**。具体菜单以系统为准。配对本身不会授权控制。
+3. 回 App 设备设置，点“允许控制5分钟（用于手动校准）”。退出设备设置，通过右上角“更多 → 指针校准”进入实验台，只测试移动，然后在安全靶心上测试点击。
+4. 点“停止控制”，确认设备报告已停止，再测试停止后不能继续动作。软件停止未确认时立刻拔掉 USB 电源，并结束系统屏幕广播。C3 本主线没有外接 STOP / ARM 按钮。
 
-## 5. 先验证一小步，再开 AI
+不能在密码、付款、删除、发消息或权限按钮上校准。HID 输入仅支持最多 64 个可打印 US ASCII 字节，不支持直接输入中文 / emoji。ReplayKit 是否能录到系统指针仍需真机确认；若看不到指针，不能假定自动定位可用。
 
-1. 保持自动会话停止，按物理 ARM。
-2. 在主页点“指针校准”，进入“指针实验台”。先只测试一个方向的移动，确认系统指针确实移动。
-3. 确认指针在本地安全靶心上，再试“左键点击”，检查计数。不要在消息发送、支付、删除或权限按钮上测试。
-4. 验证物理 STOP 可以阻止后续动作，再重新 ARM。输入测试只支持最多 64 个可打印 US ASCII 字节，不支持直接输入中文 / emoji。
+## 5. 配模型，然后开始一个小任务
 
-手动操作正常不等于 AI 能正常定位指针。ReplayKit 是否把系统指针录进画面需要真机验证；如果没有指针图像，当前自动控制路径可能无法使用。
+1. 右上角“更多 → 连接与模型”，选择一条路径：
+   - API Key：选择协议、完整 HTTPS 请求 URL、视觉模型与对应密钥。
+   - [ChatGPT 套餐登录](CHATGPT_PLAN_LOGIN.zh-CN.md)：在系统登录界面授权，并单独勾选套餐使用同意。原生回调与账户可用性仍待真机验证；失败不会自动改用付费 API。
+2. 阅读并打开“同意将广播中的屏幕截图发给所选服务”。图片和任务文字会离开手机，受所选服务的数据与额度政策约束；不是纯本地推理。
+3. 第一次保持低风险点击 / 输入开关、可选有界后台模式关闭，最大步数调小。在聊天输入一个小目标，例如“向下滚动一点，观察后停止”。语音只填草稿，不自动发送。
+4. 点“开始接管”。App 会在这次明确操作中申请一次控制授权，再准备会话；已有授权不会续期。然后点输入区下方的系统屏幕广播按钮，选择 **SightLatch Broadcast**，由你确认开始广播。
+5. 返回安全目标 App，观察实际结果。回 SightLatch 可展开聊天回复下的“执行过程”查看本次操作摘要。完成后点“停止控制”，并从系统结束广播，确认停止后再打开敏感页面。
 
-## 6. 第一次 AI 会话
+授权最多 5 分钟，断连、到期或重启会撤销；不自动续租，不重试旧动作。Live Activity 只显示状态，不保证永久后台运行。默认循环由广播扩展承担，系统可能暂停或终止。若暂停后需要重新授权，先停止，再主动开始新会话。
 
-1. 打开不含私人资料的静态文章，准备一个很小的任务，例如“向下滚动一点，观察后停止”。不要从登录、购物或社交发布开始。
-2. 回到 SightLatch 填写任务，首次可把最大步数调小。物理 ARM 后点击“准备会话”。
-3. 点击中间的系统屏幕广播按钮，手动选择 **SightLatch Broadcast** 并开始广播，然后返回目标 App。
-4. 持续观察手机和“动作记录”。默认谨慎模式仅自动相对移动 / 滚动；点击、键盘、输入需要人工处理。会话最多 5 分钟，默认 20 步、上限 50 步。
-5. 完成后点 App 停止按钮，并结束系统屏幕广播；确认硬件解除 ARM 后再打开敏感页面。软件停止状态不确定时，使用物理 STOP 或直接断开 ESP32 电源。
+## 出错时先看哪一项
 
-灵动岛 / Live Activity 用于显示状态，不意味着主 App 永久保活。默认工作由广播扩展承担；系统仍可能暂停或终止。截图过期、网络异常、模型不确定或风险判断会暂停，不会自动重试旧动作。“我已手动处理，继续观察”表示重新观察，不会重放原先被拦截的动作。
+- **局域网失败**：检查同一可互通 Wi-Fi、IP、令牌和 App 局域网权限。
+- **找不到蓝牙设备**：重新在 App 打开 30 秒配对窗口，查找 SightLatch；上电不会自动广播。
+- **BLE 已连但不能动**：检查 App 控制授权是否过期，重新主动授权；不要删安全校验。
+- **停止不确定**：立即断 USB 电源，并结束系统广播。
+- **模型失败**：检查所选路径的登录 / 密钥、模型与额度；不要把凭据放进截图。
+- **广播列表无扩展**：检查 App 与两个扩展的签名、嵌入和共享组。
 
-## 遇到问题时
+反馈请给系统 / Xcode / 板型、当前步骤、首个完整错误与脱敏日志，不要提供密钥、密码、令牌或敏感截图。
 
-- **广播列表没有 SightLatch Broadcast**：检查主 App 是否成功安装、扩展是否嵌入、签名和 App Group 是否一致。
-- **局域网检查失败**：确认同一可互通网络、App 的局域网授权、设备 IP 和 token；先不要排查模型。
-- **BLE 已连但不能动**：检查物理 ARM、STOP 接线、授权是否过期；不要修改安全检查强行执行。
-- **模型报错**：检查协议、完整 URL、视觉模型、该端点专用 key 和 API 余额；不要把 key 放进报错截图。
-- **画面上传却没有动作**：检查是否能在广播画面中定位系统指针、是否谨慎模式暂停、是否截图过期。安全检查是必要条件，但不能保证模型永不误判。
-- **需要反馈**：提供系统 / Xcode / 板卡版本、当前步骤、脱敏错误与动作日志。不要附 API Key、设备 token、Wi-Fi 密码或敏感屏幕内容。
+## 可选旧模式：ESP32-S3 + 外接按钮
 
-相关资料：[iOS 详细说明](../ios/README.md) · [固件说明](../firmware/README.md) · [当前验证边界](../CURRENT_VALIDATION_20261015.zh-CN.md)
+仓库保留 S3 源码路径，但它**不是本次 C3 零 GPIO 流程，也未在本轮重新验证**。仅当你有 S3 并明确选物理按钮模式时，才按 [固件指南](../firmware/README.md)复制 `config.example.h`、核对引脚与外接 ARM / STOP、手动构建。不要把 C3 镜像烧到 S3，也不要把旧按钮步骤当成 C3 前置条件。

@@ -1,7 +1,11 @@
-// Replace these identifiers with your own registered identifiers before signing.
-PILOT_BUNDLE_PREFIX = com.example.HIDPilot
-PILOT_APP_GROUP = group.com.example.HIDPilot
-PILOT_KEYCHAIN_GROUP = $(AppIdentifierPrefix)com.example.HIDPilot.shared
+// Fresh clone: open HIDPilot.xcodeproj and select the same Team on all targets.
+// Team-scoped defaults avoid the shared com.example identifier. The literal
+// "team" keeps the identifier syntactically valid in unsigned simulator builds.
+// Keep existing registered identifiers in Local.xcconfig when upgrading an install.
+PILOT_BUNDLE_PREFIX = com.sightlatch.team$(DEVELOPMENT_TEAM).HIDPilot
+PILOT_APP_GROUP = group.$(PILOT_BUNDLE_PREFIX)
+// AppIdentifierPrefix is supplied by signing; it is not always the Team ID.
+PILOT_KEYCHAIN_GROUP = $(AppIdentifierPrefix)$(PILOT_BUNDLE_PREFIX).shared
 SWIFT_VERSION = 5.0
 IPHONEOS_DEPLOYMENT_TARGET = 18.0
 TARGETED_DEVICE_FAMILY = 1

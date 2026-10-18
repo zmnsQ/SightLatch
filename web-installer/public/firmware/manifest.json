@@ -1,0 +1,46 @@
+{
+  "name": "SightLatch ESP32-C3",
+  "version": "0.2.0-c3",
+  "core": "3.3.5",
+  "arduinoJson": "7.0.4",
+  "builds": [
+    {
+      "chipFamily": "ESP32-C3",
+      "variant": "usb",
+      "flashSize": 4194304,
+      "flashMode": "dio",
+      "flashFrequency": "40m",
+      "parts": [
+        {
+          "path": "firmware/sightlatch-0.2.0-c3-usb.bin",
+          "offset": 0,
+          "size": 4194304,
+          "sha256": "a45d880b3d23d43454e41df5cf63ad4d950289f0223333606e9411cd4ae2bf97"
+        }
+      ]
+    },
+    {
+      "chipFamily": "ESP32-C3",
+      "variant": "uart",
+      "flashSize": 4194304,
+      "flashMode": "dio",
+      "flashFrequency": "40m",
+      "parts": [
+        {
+          "path": "firmware/sightlatch-0.2.0-c3-uart.bin",
+          "offset": 0,
+          "size": 4194304,
+          "sha256": "eb6b142449aa98b711c74e41d3a73cc87b06bfbfe51f1102360f11c72a5c260d"
+        }
+      ]
+    }
+  ],
+  "source_sha256": {
+    "firmware/IPhoneHIDBridge/Bridge.cpp": "ae2a2e14fa4ce8a5bc7ccdfe7fda08e6a4db4d83bb80897ab22215b147d99407",
+    "firmware/IPhoneHIDBridge/IPhoneHIDBridge.ino": "d6d393a756acda7279bfeba764a8da457b4e3a81c2753e1b0048723225663f0d",
+    "firmware/IPhoneHIDBridge/ProtocolPrimitives.h": "07cb3c5dc7b00f6333acda2cade65bb106b9fcd0bdd030205be42c753f3bef6a",
+    "firmware/IPhoneHIDBridge/config.default.h": "4dddc2b27ee8f8294e012153ff9bf8c97e2e1803c16fb044620070ae476a1f60",
+    "firmware/IPhoneHIDBridge/config.example.h": "d7bb1fdf97e4c8b2102161e962c14f3fdca94ae43b272ffec10da8e151885226",
+    "scripts/build_firmware.sh": "47a1289817db4b14e9b38a7f0c7468e1c32072977986abbe95c1d09e7190300b"
+  }
+}

@@ -1,0 +1,7 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {validateDevice,validateImage,validateManifest} from '../validation.js';
+test('rejects other chips and undersized/unknown flash',()=>{for(const x of [['ESP32',4096],['ESP32-S3',4096],['ESP32-C3',2048],['ESP32-C3',undefined]])assert.throws(()=>validateDevice(...x));validateDevice('ESP32-C3',4096)});
+test('refuses invalid images and manifests',()=>{assert.throws(()=>validateImage(new Uint8Array(100)));assert.throws(()=>validateManifest({version:'wrong'},'usb'))});
+test('validates a merged C3 image and refuses classic ESP32',()=>{const b=new Uint8Array(0x11000);b[0]=b[0x10000]=0xe9;b[12]=b[0x1000c]=5;b[2]=2;b[3]=0x20;b[0x8000]=0xaa;b[0x8001]=0x50;validateImage(b);b[12]=0;assert.throws(()=>validateImage(b))});
+test('requires explicit C3 zero-offset checksummed variants',()=>{const m={version:'0.2.0-c3',builds:[{variant:'usb',chipFamily:'ESP32-C3',parts:[{path:'firmware/test.bin',offset:0,sha256:'a'.repeat(64)}]}]};validateManifest(m,'usb');assert.throws(()=>validateManifest(m,'uart'));m.builds[0].parts[0].offset=4096;assert.throws(()=>validateManifest(m,'usb'))});
+
+test('rejects altered app chip high byte, flash parameters and partition header',()=>{const b=new Uint8Array(0x11000);b[0]=b[0x10000]=0xe9;b[12]=b[0x1000c]=5;b[2]=2;b[3]=0x20;b[0x8000]=0xaa;b[0x8001]=0x50;for(const offset of [0x1000d,2,3,0x8000,0x8001]){const copy=b.slice();copy[offset]^=1;assert.throws(()=>validateImage(copy));}});

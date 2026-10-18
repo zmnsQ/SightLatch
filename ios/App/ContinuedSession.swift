@@ -101,29 +101,42 @@ final class ContinuedSession {
             let hardware = HardwareClient(configuration: configuration)
             var completed = false
             var steps = 0
-            var lastFrameID = ""
+            var agent = AgentSession(id: command.id, startedAt: command.createdAt, maxRounds: configuration.maxSteps)
             var lastProgressAt = Date()
             let end = command.createdAt.addingTimeInterval(300)
             do {
                 await self.publish("待广播", "系统已实际启动可选后台任务；请主动开始广播", steps: 0, sessionID: command.id, systemTask: task)
-                while Date() < end, steps < Int(task.progress.totalUnitCount) {
+                while Date() < end, agent.limitReason() == nil {
                     try Task.checkCancellation()
                     guard let current = store.command, current.id == command.id, current.running,
                           store.configuration.uploadConsent else { throw CancellationError() }
                     guard let frame = store.read("frame.json", as: SharedFrame.self), frame.sessionID == command.id,
-                          frame.id != lastFrameID, Date().timeIntervalSince(frame.capturedAt) < 3 else {
+                          agent.accepts(frameID: frame.id, capturedAt: frame.capturedAt), Date().timeIntervalSince(frame.capturedAt) < 3 else {
                         if Date().timeIntervalSince(lastProgressAt) > 45 { throw PilotError.message("45秒未收到新广播画面，请结束后重新准备会话") }
                         try await Task.sleep(nanoseconds: 250_000_000); continue
                     }
-                    lastFrameID = frame.id
+                    try agent.observe(frameID: frame.id, capturedAt: frame.capturedAt, fingerprint: frame.fingerprint)
                     lastProgressAt = Date()
                     let deadline = frame.capturedAt.addingTimeInterval(min(20, max(3, configuration.maxFrameAge)))
-                    await self.publish("思考", "后台任务正在处理新帧", steps: steps, sessionID: command.id, systemTask: task)
+                    await self.publish("规划", "根据新画面和工具执行结果选择下一步", steps: steps, sessionID: command.id, systemTask: task)
                     try Task.checkCancellation()
                     guard self.authorized(command: command, frame: frame, deadline: deadline) else { throw CancellationError() }
-                    let proposal = try await AIClient(configuration: configuration).propose(jpeg: frame.jpeg, task: command.task, frameID: frame.id)
-                    try Task.checkCancellation()
-                    guard self.authorized(command: command, frame: frame, deadline: deadline) else { throw PilotError.message("截图变化、过期或会话已取消；旧动作已丢弃") }
+                    let proposal: ActionProposal
+                    do {
+                        proposal = try await AIClient(configuration: configuration).propose(jpeg: frame.jpeg, task: command.task, frameID: frame.id, context: agent.modelContext)
+                        try Task.checkCancellation()
+                        guard self.authorized(command: command, frame: frame, deadline: deadline) else { throw PilotError.message("截图变化、过期或会话已取消；旧动作已丢弃") }
+                    } catch is CancellationError { throw CancellationError() }
+                    catch {
+                        guard let latest = store.command, latest.id == command.id, latest.running,
+                              latest.generation == command.generation, store.configuration.uploadConsent else { throw CancellationError() }
+                        if agent.recoverBeforeDispatch("Model request failed or stale proposal discarded; no HID sent.") {
+                            await self.publish("观察", "本轮未执行，等待新画面重新规划（最多重试两次）", steps: steps, sessionID: command.id, systemTask: task)
+                            try await Task.sleep(nanoseconds: 1_000_000_000)
+                            continue
+                        }
+                        throw error
+                    }
                     if let reason = SafetyGate.rejection(proposal, task: command.task, config: configuration) {
                         throw PilotError.message("\(reason)。请人工处理后重新开始后台会话；不会重放旧动作。")
                     }
@@ -136,20 +149,29 @@ final class ContinuedSession {
                                   latest.generation == command.generation, store.configuration.uploadConsent,
                                   let lease = store.read("lease.json", as: ExecutionLease.self), lease.sessionID == command.id, lease.expiresAt > Date(),
                                   let fresh = store.read("frame.json", as: SharedFrame.self), fresh.sessionID == command.id else { return false }
-                            return Date() < deadline && Self.stable(frame, fresh)
+                            return Date() < deadline && Date().timeIntervalSince(command.createdAt) < 300 && Self.stable(frame, fresh)
+                        }, sessionAuthorized: {
+                            guard let latest = store.command,
+                                  let lease = store.read("lease.json", as: ExecutionLease.self) else { return false }
+                            return Date().timeIntervalSince(command.createdAt) < 300 && latest.id == command.id && latest.running && latest.generation == command.generation && store.configuration.uploadConsent && lease.sessionID == command.id && lease.expiresAt > Date()
                         })
-                        store.log("步骤\(steps + 1)：\(proposal.description)；后台协调模式硬件确认完成")
+                        store.log("步骤\(steps + 1)：\(proposal.description)；后台协调模式硬件确认完成", sessionID: command.id)
                     }
+                    let action = (try? JSONEncoder().encode(proposal)).flatMap { String(data: $0, encoding: .utf8) } ?? proposal.description
+                    agent.record(action: action, outcome: proposal.type == .wait ? "No HID sent. Observe a newer screen." : "hardware_completed; verify UI effect in next observation")
                     steps += 1
                     task.progress.completedUnitCount = Int64(steps)
                     await self.publish("观察", "等待新的广播画面验证实际效果", steps: steps, sessionID: command.id, systemTask: task)
                     try await Task.sleep(nanoseconds: UInt64(max(2, min(30, configuration.frameInterval)) * 1_000_000_000))
                 }
-                await self.publish("停止", completed ? "AI认为完成，仍需你人工确认结果" : "已到达步数或五分钟上限", steps: steps, sessionID: command.id, systemTask: task)
+                self.revoke(sessionID: command.id)
+                await self.publish(completed ? "完成" : "停止", completed ? "AI认为完成，仍需你人工确认结果" : "已到达步数或五分钟上限", steps: steps, sessionID: command.id, systemTask: task)
             } catch is CancellationError {
+                self.revoke(sessionID: command.id)
                 await self.publish("停止", "后台任务已取消或系统撤销运行时间", steps: steps, sessionID: command.id, systemTask: task)
             } catch {
-                store.log("后台会话停止：\(error.localizedDescription)")
+                self.revoke(sessionID: command.id)
+                store.log("后台会话停止：\(error.localizedDescription)", sessionID: command.id)
                 await self.publish("暂停", error.localizedDescription, steps: steps, sessionID: command.id, systemTask: task)
             }
             leaseWriter.cancel()
@@ -169,7 +191,7 @@ final class ContinuedSession {
     private func authorized(command: SessionCommand, frame: SharedFrame, deadline: Date) -> Bool {
         let store = SharedStore.shared
         guard let current = store.command, current.id == command.id, current.running, current.generation == command.generation,
-              store.configuration.uploadConsent, Date() < deadline,
+              store.configuration.uploadConsent, Date() < deadline, Date().timeIntervalSince(command.createdAt) < 300,
               let lease = store.read("lease.json", as: ExecutionLease.self), lease.sessionID == command.id, lease.expiresAt > Date(),
               let latest = store.read("frame.json", as: SharedFrame.self), latest.sessionID == command.id else { return false }
         return Self.stable(frame, latest)
@@ -183,10 +205,9 @@ final class ContinuedSession {
     @available(iOS 26.0, *)
     private func publish(_ phase: String, _ detail: String, steps: Int, sessionID: String, systemTask: BGContinuedProcessingTask) async {
         guard SharedStore.shared.command?.id == sessionID else { return }
+        SharedStore.shared.log("\(phase)：\(detail)", sessionID: sessionID)
         try? SharedStore.shared.write(PilotStatus(phase: phase, detail: detail, steps: steps, sessionID: sessionID), to: "status.json")
         systemTask.updateTitle("SightLatch · \(phase)", subtitle: "\(steps)步 · 五分钟有界会话")
-        for activity in Activity<PilotActivityAttributes>.activities where activity.attributes.sessionID == sessionID {
-            await activity.update(ActivityContent(state: .init(phase: phase, steps: steps, updatedAt: Date()), staleDate: Date().addingTimeInterval(15)))
-        }
+        PilotActivityManager.shared.publish(SharedStore.shared.status, running: SharedStore.shared.command?.running == true)
     }
 }

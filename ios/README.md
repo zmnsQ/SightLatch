@@ -6,7 +6,7 @@
 
 本轮修复持久化假成功、准备/停止/校准竞态、跨进程命令更新、配置白名单、广播终止撤销与STOP确认。损坏本地数据会阻止保存，可在工作区确认后先保留副本再重置；不删除Keychain。更改端点/协议必须重新同意上传。旧编译尝试仅为历史，本轮未编译Swift。完整变更及验收见 `../CURRENT_VALIDATION_20261015.zh-CN.md`。
 
-签名建议复制 `Config/Local.example.xcconfig` 为Git忽略的 `Config/Local.xcconfig` 后填写，覆盖公共默认值，避免后续pull冲突。
+首次安装直接打开工程，在三个 target 选择同一个 Development Team 即可开始构建；无需复制 `Local.example.xcconfig`。`Local.xcconfig` 仅用于可选高级覆盖或保留既有签名标识，仍被 Git 忽略。
 
 ## 既有功能
 
@@ -28,26 +28,48 @@
 
 使用 Xcode 26 或更新的兼容 Xcode / iOS SDK（源码调用 iOS 26 glassEffect，需要对应SDK才能编译）。部署下限18.0是为了可用性降级，不表示已验证18或26.5.2；代码不依赖任何iOS27功能。目标设备为iPhone。没有第三方Swift依赖、没有复制无许可证仓库源码。已包含原创 AppIcon 与深浅色品牌标记；尚未提供 App Store 上架素材。
 
-### 签名需要你修改
+### 首次签名：只选自己的 Team
 
-1. 在本地 `Config/Local.xcconfig` 把 `PILOT_BUNDLE_PREFIX` 改成你拥有的唯一前缀，比如 `com.yourcompany.HIDPilot`，并修改 `PILOT_APP_GROUP`。
-2. 同步修改 `PILOT_KEYCHAIN_GROUP` 的后缀，保留 `$(AppIdentifierPrefix)`；前缀并不一定总等于Team ID，请以签名配置为准。
-3. 在三个target选择同一开发者Team。App Group在开发者后台及三个target启用相同值。主App与Broadcast必须启用同一个Keychain access group；Widget不读取密钥。
-4. 确认生成的 entitlements/provisioning profile 确实包含这些组。个人免费签名可能不满足这些能力；能否使用需以你的开发者账号和Xcode实际结果为准。
-5. 安装主App时会嵌入两个扩展。设备首次解锁后才能读取共享凭据。Keychain使用 `AfterFirstUnlockThisDeviceOnly`，不云同步；卸载App并不保证删除Keychain内容。
+1. 打开工程后，在 `HIDPilot`、`HIDPilotBroadcast`、`HIDPilotWidget` 的 Signing & Capabilities 选择同一 Development Team，保持 Automatically manage signing 开启。
+2. 公共配置会用 `com.sightlatch.team<所选TeamID>.HIDPilot` 派生主 App 与两个扩展的 Bundle ID、共同 App Group，以及主 App / Broadcast 的 Keychain group。Keychain 前缀仍用系统提供的 `$(AppIdentifierPrefix)`，不假定它等于 Team ID。Widget 不读取密钥。
+3. 选择 iPhone 并运行 HIDPilot；两个扩展随主 App 安装。账户必须支持所需能力并允许 Xcode 配置签名。免费 Personal Team 可能不满足 App Groups 等要求，以 Xcode 实际结果为准，不要删除共享权限绕过。
+4. 安装后首次解锁设备才能读取共享凭据。Keychain 使用 `AfterFirstUnlockThisDeviceOnly`，不云同步；卸载 App 并不保证删除 Keychain 内容。
+
+### 可选：保留既有标识 / 自定义签名
+
+首次安装无需 `Config/Local.xcconfig`。若已有安装或注册标识，请保留现有本地文件；它会继续覆盖默认值，避免更换容器导致旧配置与凭据不可见。需要新建覆盖时才复制 `Local.example.xcconfig`，取消所需行的注释并填写。一般只需覆盖 `PILOT_BUNDLE_PREFIX`，两种共享组会跟随；历史安装使用其他组时再显式设置 `PILOT_APP_GROUP`、`PILOT_KEYCHAIN_GROUP`，后者保留 `$(AppIdentifierPrefix)`。
+
+不要逐个 target 手改 Bundle Identifier：它们应共享同一前缀，扩展保留 `.Broadcast` / `.Widget` 后缀。更换 Team 或标识可能变成新的安装 / 数据容器，不提供自动迁移。默认标识若已被其他账户占用，也可在本地覆盖一个自己拥有的前缀。不要将个人配置、签名文件、API Key 或设备 token 提交到仓库。
 
 **API与设备凭据只存Keychain**，按provider+完整endpoint、device URL分别绑定。更换端点时需重新填写密钥；这避免把旧/新凭据误发给不同端点。配置、任务、最多100条动作元数据/暂停原因存App Group；默认扩展直连模式不保存截图，只在内存中编码并发送；可选后台协调模式会短暂保存一份最新截图到受保护且排除备份的App Group文件（覆盖并在结束时删除），不是安全擦除保证。云端截图保留策略仍由供应商控制。日志可能包含用户任务推导的简短理由，不要填敏感任务。
+
+## 聊天式首页
+
+首页显示实际提交的任务、当前操作回复与可展开的执行过程；执行记录按会话区分，不显示内部思维链。底部输入区支持文本与用户主动语音听写，听写只填草稿，不自动开始。点“开始接管”才申请设备控制，ReplayKit 屏幕广播仍由系统要求你主动开启。
+
+设备配对与手动授权收在设备设置，模型与凭据收在“更多 → 连接与模型”。iOS 26 使用原生 Liquid Glass 操作按钮；降低透明度时改用不透明背景 / 普通按钮，大字号时纵向排列操作。云端只通过 Swift 语法解析，未提供或声称已验证真机截图与视觉效果。
+
+## ESP32-C3 软件控制模式
+
+软件模式固件的 `/v1/status` 明确返回 `control_mode: "software"` 才显示 App 配对与授权按钮。旧固件没有此字段，或返回 `physical` 时仍走硬件 ARM / STOP，不尝试软件授权。
+
+1. 网页 USB 串口完成设备网络 / token 配置后，在 App 填相同设备地址与 token，点“保存并检查局域网 / BLE”。
+2. 在主页点设备状态，进入设备设置后点“开始蓝牙配对”，设备开放30秒窗口；到 iPhone 系统设置连接 SightLatch，必要时启用辅助触控。配对本身不授权控制。
+3. 手动校准时点“允许控制5分钟（用于手动校准）”。正常 AI 会话直接点主页“开始接管”，会在明确用户动作内申请一次控制授权，再准备会话；随后由你启动系统屏幕广播。
+4. “停止控制”同时撤销本地会话并请求设备 STOP。若无法确认送达，立刻拔掉 USB 电源，并结束系统广播。App 不会在轮询、重连、恢复任务或上电时自动授权，不会为已有授权续期。
+
+USB 用于烧录、首次配置与供电；运行时 **App → 设备是局域网 Wi-Fi HTTP，设备 → iPhone 是 BLE HID**。不能当成纯蓝牙方案。前台每约3秒读取已主动检查过的设备状态；10秒没有新快照会标为过期，网络失败显示未知。App 退后台不保证刷新，硬件授权最多5分钟与断连/重启撤销由设备独立执行。`hid_connected` 在软件固件中表示 BLE 加密认证已成功；App 不凭已配对记录推断当前连接。具体板型与固件构建见固件指南。
 
 ## 用户自己执行的首次验收步骤（本次未执行）
 
 1. 按固件README烧录ESP32-S3；在可信、最好隔离的Wi-Fi中配置唯一随机设备Token。打开iPhone设置配对ESP32的BLE HID设备，必要时开启辅助触控；确认有系统指针。
 2. 在App“连接与安全”填写 `http://hidbridge.local` 或设备私网IPv4、对应Token。先在前台点击“保存并检查局域网 / BLE”，按系统提示允许局域网访问。后台扩展不能可靠触发首次授权。
 3. 模型选择：OpenAI Responses、OpenAI-compatible Chat Completions、Anthropic Messages、Google Gemini generateContent。填写完整HTTPS URL、模型ID和你自己的API Key。必须使用支持图片的模型。
-4. 示例端点：OpenAI `https://api.openai.com/v1/responses`；兼容 `https://你的域名/v1/chat/completions`；Anthropic `https://api.anthropic.com/v1/messages`；Gemini `https://generativelanguage.googleapis.com/v1beta/models/你的模型ID:generateContent`。Gemini实际模型以URL为准。切换协议不会自动改URL，请一并修改。Anthropic额外workspace header暂未支持。没有内置OAuth或订阅token转换；自管兼容网关可填HTTPS端点，但协议、视觉能力、授权范围和条款由你确认。
+4. 示例端点：OpenAI `https://api.openai.com/v1/responses`；兼容 `https://你的域名/v1/chat/completions`；Anthropic `https://api.anthropic.com/v1/messages`；Gemini `https://generativelanguage.googleapis.com/v1beta/models/你的模型ID:generateContent`。Gemini实际模型以URL为准。切换协议不会自动改URL，请一并修改。Anthropic额外workspace header暂未支持。另有实验性 ChatGPT 套餐登录，见 [登录说明](../docs/CHATGPT_PLAN_LOGIN.zh-CN.md)；它与 API Key 路径独立，不复用 Cookie、不静默转 API 计费。自管兼容网关可填 HTTPS 端点，但协议、视觉能力、授权范围和条款由你确认。
 5. 阅读屏幕上传说明并明确同意。未配置/未同意不会运行AI；没有伪造“端侧大模型”。ChatGPT等产品订阅和API额度不能混为一谈。
 6. 停止自动会话后，物理ARM，再打开“指针实验台”。先用上下左右100单位移动，观察方向/距离；可记录每100单位像素估计。点击、滚动、Esc、ASCII输入按钮会发真实HID操作，仅在安全页面试。AI不使用这组数字伪装精确绝对坐标。
 7. 填一个无风险导航任务。初次建议保持谨慎模式：仅自动相对移动/滚动。需自动普通导航点击/搜索框ASCII输入时，另外明确启用“低风险导航”。
-8. 物理ARM，点击“准备会话”，再点中间系统广播按钮，手动选SightLatch Broadcast并开始广播。返回目标App。扩展会延迟数秒等新帧。
+8. 物理ARM，点击“开始接管”，再点中间系统广播按钮，手动选SightLatch Broadcast并开始广播。返回目标App。扩展会延迟数秒等新帧。
 9. 观察日志：观察→思考→执行→新帧观察；截图不可定位指针/模型不确定/画面变化/超时/错误都暂停。**系统指针是否出现在ReplayKit截图中没有保证，这可能让本版本无法自动移动或点击，需要你实际确认。**
 10. 先验证物理急停；再验证App停止按钮、系统停止广播、网络中断、AI错误、锁屏/广播暂停、硬件重启/断连和最大步数。严禁用交易、外部通讯、密码或敏感表单作测试场景。
 

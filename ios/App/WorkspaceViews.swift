@@ -61,7 +61,7 @@ struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     Label("让操作始终可控", systemImage: "hand.raised.fill").font(.title2.bold())
                     Text("SightLatch 使用你主动开始的系统广播观察屏幕，并通过你的ESP32蓝牙鼠标逐步操作这台iPhone。默认不自动点击；模型无法替你保证安全。")
-                    Text("先准备：ESP32刷入固件 → 同一可信Wi-Fi → 系统蓝牙配对 → 必要时辅助触控 → 设置视觉模型 → 校准指针 → 按硬件ARM。")
+                    Text("先准备：ESP32刷入固件 → 同一可信Wi-Fi → 系统蓝牙配对 → 必要时辅助触控 → 设置视觉模型 → 校准指针 → App开始接管（软件模式）或按硬件ARM。")
                     ForEach(model.readiness()) { item in
                         HStack(alignment: .top, spacing: 12) {
                             Image(systemName: item.passed ? "checkmark.circle.fill" : "circle.dashed")
@@ -81,7 +81,7 @@ struct OnboardingView: View {
                     }
                     Text("局域网权限只有真实连接请求后由系统决定是否弹窗。BLE HID配对请在系统蓝牙设置完成；App不假装拥有配对权限。广播必须由你通过系统按钮主动开始。")
                         .font(.caption).foregroundStyle(.secondary)
-                    Text("进入密码、付款、医疗或任何不应上传的页面前，先结束系统广播。软件停止可能因网络或进程终止失败，随时保留物理急停。")
+                    Text("进入密码、付款、医疗或任何不应上传的页面前，先结束系统广播。软件停止可能因网络或进程终止失败，保留物理STOP；没有按钮时随时准备拔掉USB电源。")
                         .font(.callout).padding().background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
                     Button("我已了解，进入工作区") {
                         model.workspace.onboardingComplete = true

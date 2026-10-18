@@ -4,11 +4,11 @@
 
 ### 让手机看见屏幕，通过硬件完成下一步操作。
 
-SightLatch 是一个原生 iOS AI 操作实验项目，将 ReplayKit 读屏、视觉模型 API 与 ESP32-S3 蓝牙 HID 连接起来。观察、规划和指令校验在手机侧完成，硬件端负责执行有边界的键鼠动作。
+SightLatch 是一个原生 iOS AI 操作实验项目，将 ReplayKit 读屏、视觉模型 API 与 ESP32-C3 / ESP32-S3 蓝牙 HID 连接起来。观察、规划和指令校验在手机侧完成，硬件端负责执行有边界的键鼠动作。
 
 [English](README.md) · [开始使用](docs/GETTING_STARTED.md) · [架构说明](docs/ARCHITECTURE.md) · [验证状态](docs/TESTING.md)
 
-> **当前状态：开发中，提供可检查和集成的源码。** 已有 Linux 源码契约检查及共享 C++ 逻辑测试结果；iOS 原生编译、完整固件编译、同一部 iPhone 上的读屏与 HID 闭环仍需验证。暂无已签名安装包，不宣称生产可用。
+> **当前状态：开发中，提供可检查和集成的源码。** 已有 Linux 源码契约检查及共享 C++ 逻辑测试结果；C3 镜像有云端构建检查；iOS Apple SDK 编译、真实板子刷写和同一部 iPhone 上的读屏与 HID 闭环仍需验证。暂无已签名安装包，不宣称生产可用。
 
 [首次安装与使用（中文）](docs/FIRST_RUN.zh-CN.md)
 
@@ -17,8 +17,8 @@ SightLatch 是一个原生 iOS AI 操作实验项目，将 ReplayKit 读屏、�
 - **原生操作界面**：面向 iOS 26 的 SwiftUI 与 Liquid Glass，包含首次引导、模型档案、任务历史、配置恢复和诊断导出。
 - **主动授权读屏**：由用户启动系统 ReplayKit 广播，筛选画面并限制请求与操作步数。
 - **多模型适配**：OpenAI Responses、OpenAI 兼容 Chat Completions、Anthropic Messages、Gemini 图片请求。
-- **硬件执行闭环**：通过可信局域网向 ESP32-S3 发送单步指令，再由 BLE HID 操作手机。
-- **可见且有界的会话**：物理 ARM/STOP、指令序号与期限、停止结果复核、Live Activity 状态和可选的 iOS 26 有界后台任务。
+- **硬件执行闭环**：通过可信局域网向 ESP32 发送单步指令，再由 BLE HID 操作手机。
+- **可见且有界的会话**：App 发起的控制授权与 STOP、指令序号与期限、停止结果复核、Live Activity 状态和可选的 iOS 26 有界后台任务。
 
 ## 工作方式
 
@@ -28,10 +28,10 @@ SightLatch 是一个原生 iOS AI 操作实验项目，将 ReplayKit 读屏、�
 
 ## 快速开始
 
-1. 阅读[开始使用](docs/GETTING_STARTED.md)，准备 iOS 26、Xcode 和 ESP32-S3 开发板。
-2. 打开 `ios/HIDPilot.xcodeproj`，按 [iOS 配置文档](ios/README.md)设置签名、App Group 和 Keychain 共享组。
-3. 按[固件文档](firmware/README.md)配置与刷写开发板，先验证物理停止和手动校准。
-4. 配置你拥有权限的模型 API，在不含私人内容的测试屏幕上逐步验收。
+1. 阅读[开始使用](docs/GETTING_STARTED.md)，准备 iOS 26、Xcode 和 ESP32-C3 开发板（至少 4MB Flash）。
+2. 直接打开 `ios/HIDPilot.xcodeproj`，三个 target 选择同一个 Development Team，保留自动签名后运行到 iPhone；不需复制本地配置文件。签名账户须支持所需共享能力，详见 [iOS 配置文档](ios/README.md)。
+3. 当前尚无已核验的线上烧录 URL；按 [C3 网页烧录指南](docs/ESP32_C3_SETUP.zh-CN.md)选择原生 USB 或 USB-UART 镜像，配置 Wi-Fi 和设备令牌；不接外部 GPIO。先验证 App 停止和手动校准。
+4. 配置你拥有权限的模型 API 或实验性 ChatGPT 套餐登录，在不含私人内容的测试屏幕上逐步验收。
 
 产品正式名称为 **SightLatch**。内部 Xcode 工程、target、bundle ID、共享存储和协议标识仍沿用 HIDPilot，以避免破坏签名、历史配置和设备协议。无需为了改名而重设这些标识。
 
@@ -43,8 +43,15 @@ SightLatch 是一个原生 iOS AI 操作实验项目，将 ReplayKit 读屏、�
 | 真机闭环 | 同机 BLE HID、读屏中的指针可见性和后台生命周期尚未实机验收 |
 | 局域网 | HTTP + Bearer，命令与令牌在 LAN 上明文传输；仅限隔离可信网络 |
 | AI 风险 | 单步校验与保守模式不能保证模型永不误操作 |
-| 订阅接入 | 没有 ChatGPT 订阅登录、Cookie 复用或 Coding Plan 额度复用功能 |
+| 订阅接入 | 实验性 ChatGPT 套餐登录与 API Key 独立，登录回调和账户可用性待真机验证；不复用 Cookie、不静默转 API 计费 |
 | 后台运行 | 受 iOS 调度和资源限制；灵动岛与实时活动不是永久保活手段 |
+
+## 本轮新增
+
+- 聊天式首页、语音输入与 [Siri / 实时活动](docs/SIRI_SHORTCUTS_LIVE_ACTIVITIES.md)
+- [带工具反馈的 Agent 循环](docs/AGENT_LOOP.md)与可验证停止
+- [官方 ChatGPT 计划登录](docs/CHATGPT_PLAN_LOGIN.zh-CN.md)，目前为待 iPhone 验证的原型，不自动转用付费 API
+- [C3 网页烧录](docs/ESP32_C3_SETUP.zh-CN.md)：USB 烧录/供电，Wi-Fi 传命令，BLE HID 操作 iPhone；网页部署需实际成功后才有可用入口
 
 ## 文档导航
 
@@ -61,7 +68,7 @@ SightLatch 是一个原生 iOS AI 操作实验项目，将 ReplayKit 读屏、�
 
 ## 许可
 
-项目尚未选定许可证。仓库公开不等于自动授予开源许可；系统框架与第三方依赖遵循各自许可证，分发时需另行核对。
+本项目采用 [MIT 许可证](LICENSE)。第三方依赖保留各自许可证；ChatGPT 计划接入还适用 [OpenAI SIWC 条款](https://openai.com/policies/sign-in-with-chatgpt-terms/)。
 
 ## 品牌资源
 

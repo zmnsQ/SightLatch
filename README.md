@@ -4,11 +4,11 @@
 
 ### See the screen. Plan one step. Act through hardware.
 
-An experimental native iOS agent that connects ReplayKit screen capture, vision-capable AI APIs, and an ESP32-S3 Bluetooth HID bridge. The iPhone observes and plans; the ESP32 performs bounded keyboard and mouse actions.
+An experimental native iOS agent that connects ReplayKit screen capture, vision-capable AI APIs, and an ESP32-C3 / ESP32-S3 Bluetooth HID bridge. The iPhone observes and plans; the ESP32 performs bounded keyboard and mouse actions.
 
 [简体中文](README.zh-CN.md) · [Getting started](docs/GETTING_STARTED.md) · [Architecture](docs/ARCHITECTURE.md) · [Validation](docs/TESTING.md)
 
-> **Development status:** source available for integration and testing. Linux source-contract checks and shared C++ primitive tests have passed. Native iOS builds, complete firmware builds, and the same-iPhone end-to-end loop have not been validated. No signed application or production-ready release is provided.
+> **Development status:** source available for integration and testing. Linux source-contract checks and shared C++ primitive tests have passed. C3 firmware has cloud build checks; Apple SDK builds, physical flashing, and the same-iPhone end-to-end loop remain unverified. No signed application or production-ready release is provided.
 
 [首次安装与使用（中文）](docs/FIRST_RUN.zh-CN.md)
 
@@ -19,7 +19,7 @@ A phone agent needs both observation and a way to act. SightLatch explores that 
 - **Native control surface** — SwiftUI app, setup checks, task history, model profiles, and a Liquid Glass interface targeting iOS 26.
 - **Explicit observation** — user-started ReplayKit capture, frame selection, request limits, and visible session state.
 - **Provider choice** — adapters for OpenAI Responses, OpenAI-compatible Chat Completions, Anthropic Messages, and Gemini.
-- **Physical execution** — ESP32-S3 firmware with ARM/STOP controls, pairing windows, sequence checks, command deadlines, and input release.
+- **Physical execution** — ESP32 firmware with explicit App ARM/STOP controls, pairing windows, sequence checks, command deadlines, and input release.
 - **Bounded sessions** — stop verification, expiry handling, and an optional iOS 26 continued-processing path. Live Activities display status; they do not grant permanent background execution.
 
 ## The loop
@@ -30,7 +30,7 @@ flowchart LR
     B --> C[Configured vision API]
     C --> D[iPhone validates one action]
     D --> E[Local Wi-Fi command]
-    E --> F[ESP32-S3 BLE HID]
+    E --> F[ESP32 BLE HID]
     F --> G[iPhone keyboard / pointer]
     G --> B
 ```
@@ -40,10 +40,10 @@ There is no livestream publishing step and no remote server that directly contro
 ## Start with a controlled test
 
 1. Read [Getting started](docs/GETTING_STARTED.md) and the [known limits](#known-limits).
-2. Open `ios/HIDPilot.xcodeproj` in Xcode and configure your signing identifiers using `ios/Config/Local.xcconfig`.
-3. Configure and flash the ESP32-S3 following the [firmware guide](firmware/README.md).
-4. Verify the physical stop control and manual pointer calibration before enabling AI steps.
-5. Use a non-sensitive test screen, inspect each action, and keep the physical stop control available.
+2. Open `ios/HIDPilot.xcodeproj` in Xcode, select your Development Team for all three targets with automatic signing, and run on your iPhone. No copied config file or project generator is needed.
+3. Flash a supported C3 variant using the [web installer guide](docs/ESP32_C3_SETUP.zh-CN.md), then configure Wi-Fi and a device token over USB. No external GPIO wiring is required.
+4. Verify the App stop control and manual pointer calibration before enabling AI steps.
+5. Use a non-sensitive test screen, inspect each action, and keep the USB power connection accessible so you can unplug it if software STOP is unconfirmed.
 
 The internal Xcode project, target names, bundle identifiers, storage identifiers, and protocol fields retain **HIDPilot** for compatibility. User-facing branding is **SightLatch**; do not rename signing or shared-container identifiers merely to match the product name.
 
@@ -55,14 +55,21 @@ The internal Xcode project, target names, bundle identifiers, storage identifier
 | iPhone integration | Same-device BLE HID reception, pointer visibility in ReplayKit, and background behavior need hardware validation |
 | Networking | Local HTTP with a bearer token; only use an isolated, trusted LAN. Do not expose it to the internet |
 | Model safety | Validation and conservative defaults reduce mistakes but cannot guarantee a model's decisions are safe |
-| Subscriptions | No built-in ChatGPT subscription OAuth, cookie reuse, or third-party coding-plan credit integration |
+| Subscriptions | Experimental ChatGPT plan sign-in is separate from API-key billing; native login and entitlement availability need device verification. No cookie reuse or silent API fallback |
 | Background execution | Subject to iOS scheduling, memory, cancellation, and extension lifecycle limits |
+
+## New integration guides
+
+- [Stateful agent loop](docs/AGENT_LOOP.md)
+- [Siri, voice input and Live Activities](docs/SIRI_SHORTCUTS_LIVE_ACTIVITIES.md)
+- [Experimental official ChatGPT plan login](docs/CHATGPT_PLAN_LOGIN.zh-CN.md)
+- [C3 browser flashing](docs/ESP32_C3_SETUP.zh-CN.md); a live installer URL requires successful Pages deployment
 
 ## Project layout
 
 ```text
 ios/        SwiftUI app, ReplayKit extension, Live Activity, shared models
-firmware/   ESP32-S3 BLE HID bridge and configuration template
+firmware/   ESP32 BLE HID bridge and configuration template
 tests/      Source-contract checks and shared C++ primitive tests
 docs/       Architecture, setup, validation, and research references
 ```
@@ -75,7 +82,7 @@ When reporting a problem, include OS/toolchain/board versions, the first relevan
 
 ## License and dependencies
 
-A project license has not yet been selected. Public source visibility does not itself grant an open-source license. Third-party frameworks and dependencies retain their respective licenses; consult the platform and firmware documentation before redistribution.
+This project is licensed under [MIT](LICENSE). Third-party dependencies retain their respective licenses. ChatGPT plan integration is additionally subject to the [SIWC terms](https://openai.com/policies/sign-in-with-chatgpt-terms/).
 
 ## Brand assets
 

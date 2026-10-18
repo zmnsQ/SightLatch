@@ -41,6 +41,25 @@ final class SharedStore {
     func write<T: Encodable>(_ value: T, to name: String) throws {
         try queue.sync { try withFileLock { try writeUnlocked(value, to: name) } }
     }
+    // Persisted cancellation fence shared by UI and Live Activity / shortcut STOP.
+    var stopGeneration: String? { read("stop-generation.json", as: String.self) }
+    func invalidatePendingStarts() throws {
+        try write(UUID().uuidString, to: "stop-generation.json")
+    }
+    func startCommand(_ command: SessionCommand, expectedStopGeneration: String?) throws {
+        try queue.sync {
+            try withFileLock {
+                guard let directory else { throw PilotError.message("App Group 不可用") }
+                let fenceURL = directory.appendingPathComponent("stop-generation.json")
+                let current: String?
+                if FileManager.default.fileExists(atPath: fenceURL.path) {
+                    current = try JSONDecoder().decode(String.self, from: Data(contentsOf: fenceURL))
+                } else { current = nil }
+                guard current == expectedStopGeneration else { throw PilotError.message("已收到停止请求，请重新主动开始。") }
+                try writeUnlocked(command, to: "command.json")
+            }
+        }
+    }
     // Serialize read-modify-write across App, ReplayKit and LiveActivityIntent processes.
     // Old-session callbacks cannot replace a newly prepared session or resurrect a stopped command.
     @discardableResult
@@ -92,9 +111,9 @@ final class SharedStore {
     var status: PilotStatus { read("status.json", as: PilotStatus.self) ?? .idle }
     var logs: [LogEntry] { read("logs.json", as: [LogEntry].self) ?? [] }
     // Extension is sole writer during broadcasting; the app only reads this file.
-    func log(_ message: String) {
+    func log(_ message: String, sessionID: String? = nil) {
         var entries = logs
-        entries.append(LogEntry(message: message))
+        entries.append(LogEntry(message: message, sessionID: sessionID))
         try? write(Array(entries.suffix(100)), to: "logs.json")
     }
 }

@@ -6,6 +6,7 @@ struct PilotConfiguration: Codable {
     var endpoint = "https://api.openai.com/v1/responses"
     var model = ""
     var deviceURL = "http://hidbridge.local"
+    var chatGPTPlanConsent: Bool?
     var uploadConsent = false
     var relativeModeConfirmed = false
     var allowLowRiskNavigation = false
@@ -72,6 +73,7 @@ struct LogEntry: Codable, Identifiable {
     var id = UUID().uuidString
     var date = Date()
     var message: String
+    var sessionID: String? = nil
 }
 
 struct PilotActivityAttributes: ActivityAttributes {

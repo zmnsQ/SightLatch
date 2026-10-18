@@ -1,3 +1,7 @@
+# ESP32-C3 零外接引脚 / S3 旧原型
+
+当前 C3 安装与软件控制请看 [零引脚安装说明](../docs/ESP32_C3_SETUP.zh-CN.md) 和 [网页安装器](../web-installer/README.md)。默认公共构建不需要 config.h 或外接按钮，凭据经 USB 写入，配对/授权/停止从 App 发起。以下 S3 按钮步骤是旧 config.h 模式的历史说明，不适用于公共 C3 镜像。
+
 # ESP32-S3 本地 HTTP → BLE 键鼠原型
 
 **2026-10-15增量：主机C++测试已覆盖原固件提取出的ASCII映射与计时回绕；没有编译完整ESP32固件。详见根目录 `CURRENT_VALIDATION_20261015.zh-CN.md`。**

@@ -58,7 +58,7 @@ struct RecoveryAdvice {
             return .init(title: "连接失败", steps: "先检查前台局域网访问与ESP32状态，再检查互联网和模型端点。App设置可重开系统权限页。不要全局关闭ATS或跳过证书验证。")
         }
         if s.contains("arm") || s.contains("硬件") || s.contains("ble") {
-            return .init(title: "硬件需要人工确认", steps: "检查BLE配对、物理急停和Wi-Fi。确认目标页面安全，再按硬件ARM。会话或boot变化后重新开始，不重试旧动作。")
+            return .init(title: "硬件需要人工确认", steps: "检查BLE配对和Wi-Fi。确认目标页面安全，在App开始接管（软件模式）或按硬件ARM；必要时拔掉USB电源。会话或boot变化后重新开始，不重试旧动作。")
         }
         if s.contains("指针") || s.contains("画面") || s.contains("截图") {
             return .init(title: "画面与指针不可靠", steps: "回到安全目标页面，确认方向和系统指针。完成校准后重新开始。若广播截图不包含指针，当前设备无法可靠自动点选。")
@@ -146,6 +146,7 @@ extension PilotViewModel {
         var candidate = profile.configuration
         // Upload consent is fresh for each endpoint switch, even when a profile previously had consent.
         candidate.uploadConsent = false
+        candidate.chatGPTPlanConsent = false
         configuration = candidate
         lastDeviceStatus = nil; deviceSummary = "档案已切换，请重新检查设备"
         apiKey = ""; deviceToken = ""
@@ -205,14 +206,16 @@ extension PilotViewModel {
         workspace.tasks[index].updatedAt = Date(); persistWorkspace()
     }
     func readiness() -> [ReadinessItem] {
-        let keyAvailable = (try? SecretStore.load(configuration.apiAccount)) != nil
+        let keyAvailable = configuration.provider == "chatgpt-plan"
+            ? ChatGPTOAuth.hasStoredPlanCredentials()
+            : (try? SecretStore.load(configuration.apiAccount)) != nil
         let deviceKeyAvailable = (try? SecretStore.load(configuration.deviceAccount)) != nil
         return [
             .init(id: "group", title: "共享存储与签名", passed: SharedStore.shared.available, detail: "App Group可访问；扩展是否能访问仍需广播验收。"),
             .init(id: "model", title: "视觉模型与API凭据", passed: !configuration.model.isEmpty && keyAvailable, detail: "只检查本地配置与Keychain可读性，不宣称API已验证。"),
             .init(id: "device", title: "设备Token", passed: deviceKeyAvailable, detail: "与固件Token一致，存于Keychain。"),
-            .init(id: "network", title: "局域网与BLE", passed: lastDeviceStatus?.hid_connected == true, detail: deviceSummary),
-            .init(id: "arm", title: "物理ARM", passed: lastDeviceStatus?.armed == true, detail: "状态是最近一次检查快照，随时可能失效。"),
+            .init(id: "network", title: "局域网与BLE", passed: deviceStatusIsFresh && lastDeviceStatus?.hid_connected == true, detail: deviceSummary),
+            .init(id: "arm", title: "设备控制授权", passed: deviceStatusIsFresh && lastDeviceStatus?.armed == true, detail: "状态是最近一次检查快照，随时可能失效。"),
             .init(id: "pointer", title: "相对指针校准", passed: configuration.relativeModeConfirmed, detail: "必须人工观察方向与当前指针，截图可见性尚需真机检查。"),
             .init(id: "consent", title: "屏幕上传同意", passed: configuration.uploadConsent, detail: "将发给当前端点；进入敏感页面前停止广播。")]
     }
@@ -222,6 +225,7 @@ extension PilotViewModel {
         if let index = profiles.firstIndex(where: { $0.id == workspace.selectedProfileID }) { profiles[index].configuration = configuration }
         for i in profiles.indices {
             profiles[i].configuration.uploadConsent = false
+            profiles[i].configuration.chatGPTPlanConsent = false
             profiles[i].configuration.relativeModeConfirmed = false
             profiles[i].configuration.allowLowRiskNavigation = false
             profiles[i].configuration.gatewayVisionConfirmed = false
@@ -245,11 +249,12 @@ extension PilotViewModel {
             for var profile in archive.profiles {
                 _ = try AddressPolicy.ai(profile.configuration.endpoint)
                 _ = try AddressPolicy.device(profile.configuration.deviceURL)
-                guard ["responses", "openai", "anthropic", "gemini"].contains(profile.configuration.provider),
+                guard ["responses", "openai", "anthropic", "gemini", "chatgpt-plan"].contains(profile.configuration.provider),
                       profile.name.count <= 60, profile.configuration.model.count <= 200,
                       profile.configuration.calibrationX.isFinite, profile.configuration.calibrationY.isFinite,
                       profile.configuration.frameInterval.isFinite, profile.configuration.maxFrameAge.isFinite else { throw PilotError.message("导入配置包含无效参数") }
                 profile.id = UUID().uuidString
+                profile.configuration.chatGPTPlanConsent = false
                 profile.configuration.uploadConsent = false; profile.configuration.relativeModeConfirmed = false
                 profile.configuration.allowLowRiskNavigation = false
                 profile.configuration.gatewayVisionConfirmed = false

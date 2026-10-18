@@ -1,0 +1,35 @@
+name: Publish USB installer (manual)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-installer/package-lock.json
+      - name: Validate packaged images
+        run: python3 scripts/verify_firmware.py
+      - name: Build static installer
+        working-directory: web-installer
+        run: npm ci && npm test && npm run build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web-installer/dist
+      - name: Deploy approved installer
+        id: deployment
+        uses: actions/deploy-pages@v4

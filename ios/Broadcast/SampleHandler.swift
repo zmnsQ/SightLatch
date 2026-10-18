@@ -20,6 +20,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
     private var sessionID = ""
     private var hardwareSession = ""
     private var config = PilotConfiguration()
+    private var agent: AgentSession?
     private let store = SharedStore.shared
 
     override func broadcastStarted(withSetupInfo setupInfo: [String : NSObject]?) {
@@ -34,7 +35,9 @@ final class SampleHandler: RPBroadcastSampleHandler {
             catch { self.finishBroadcastWithError(error); return }
             self.sessionID = command.id
             self.generation = command.generation
+            self.agent = AgentSession(id: command.id, startedAt: command.createdAt, maxRounds: self.config.maxSteps)
             self.lastCapture = Date().addingTimeInterval(4)
+            self.latestObservedAt = Date()
             self.publish("观察", "等待新帧；若截图看不到指针则暂停")
             let timer = DispatchSource.makeTimerSource(queue: self.queue)
             timer.schedule(deadline: .now(), repeating: .milliseconds(250))
@@ -59,17 +62,20 @@ final class SampleHandler: RPBroadcastSampleHandler {
             work?.cancel()
             // A new generation never replays the prior proposal. The next frame must be newly captured.
             paused = false
+            agent?.manualResume()
             hardwareSession = ""
             lastCapture = Date().addingTimeInterval(4)
             publish("观察", "已确认人工处理；等待新的目标画面")
         }
-        if Date().timeIntervalSince(command.createdAt) > 300 { stopAndFinish("会话已达五分钟上限") }
+        if !paused && Date().timeIntervalSince(latestObservedAt) > 45 { stopAndFinish("45秒未收到新广播画面"); return }
+        if Date().timeIntervalSince(command.createdAt) >= 300 { stopAndFinish("会话已达五分钟上限") }
     }
 
     override func processSampleBuffer(_ sampleBuffer: CMSampleBuffer, with sampleBufferType: RPSampleBufferType) {
         guard sampleBufferType == .video, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let orientation = (CMGetAttachment(sampleBuffer, key: RPVideoSampleOrientationKey as CFString,
                                            attachmentModeOut: nil) as? NSNumber)?.int32Value ?? 1
+        let sampledAt = Date()
         // Keep at most one queued frame observation every 300ms, including during AI inference.
         let observe = queue.sync { () -> Bool in
             guard !stopped, !paused, Date().timeIntervalSince(observationEnqueuedAt) >= 0.3 else { return false }
@@ -82,12 +88,12 @@ final class SampleHandler: RPBroadcastSampleHandler {
             guard !self.stopped, !self.paused else { return }
             let oriented = CIImage(cvPixelBuffer: pixelBuffer).oriented(forExifOrientation: orientation)
             self.latestFingerprint = self.fingerprint(oriented)
-            self.latestObservedAt = Date()
+            self.latestObservedAt = sampledAt
             guard !self.busy, Date().timeIntervalSince(self.lastCapture) >= (self.config.continuedProcessingEnabled == true ? 1 : max(2, self.config.frameInterval)) else { return }
             self.busy = true
             self.lastCapture = Date()
             let decisionFingerprint = self.latestFingerprint
-            let capturedAt = Date()
+            let capturedAt = sampledAt
             let frameID = UUID().uuidString
             let capturedGeneration = self.generation
             guard let command = self.store.command, command.id == self.sessionID, command.running else { self.busy = false; return }
@@ -109,10 +115,17 @@ final class SampleHandler: RPBroadcastSampleHandler {
                 self.busy = false
                 return
             }
-            self.publish("思考", "当前帧正在发送到你配置的 AI 服务")
+            guard self.agent?.accepts(frameID: frameID, capturedAt: capturedAt) == true else { self.busy = false; return }
+            do { try self.agent?.observe(frameID: frameID, capturedAt: capturedAt, fingerprint: Data(decisionFingerprint)) }
+            catch { self.pause(error.localizedDescription); self.busy = false; Task { await HardwareClient(configuration: configuration).stop() }; return }
+            let modelContext = self.agent?.modelContext ?? ""
+            self.publish("规划", "正在根据新画面和上一轮执行结果选择下一步")
             self.work = Task { [weak self] in
                 guard let self else { return }
                 defer { self.queue.async { self.busy = false; self.work = nil } }
+                var requestedModel = false
+                var receivedProposal = false
+                var dispatched = false
                 do {
                     let hardware = HardwareClient(configuration: configuration)
                     let device = try await hardware.status()
@@ -121,7 +134,9 @@ final class SampleHandler: RPBroadcastSampleHandler {
                     guard let beforeUpload = self.store.command, beforeUpload.id == command.id,
                           beforeUpload.generation == capturedGeneration, beforeUpload.running,
                           self.store.configuration.uploadConsent else { return }
-                    let proposal = try await AIClient(configuration: configuration).propose(jpeg: jpeg, task: command.task, frameID: frameID)
+                    requestedModel = true
+                    let proposal = try await AIClient(configuration: configuration).propose(jpeg: jpeg, task: command.task, frameID: frameID, context: modelContext)
+                    receivedProposal = true
                     try Task.checkCancellation()
                     guard let latest = self.store.command, latest.running, latest.id == command.id,
                           latest.generation == capturedGeneration else { return }
@@ -135,30 +150,55 @@ final class SampleHandler: RPBroadcastSampleHandler {
                         await hardware.stop(); return
                     }
                     if proposal.type == .done {
-                        self.queue.async { self.stopAndFinish("AI 认为任务完成；请人工确认实际结果") }; return
+                        self.queue.async { self.stopAndFinish("AI 认为任务完成；请人工确认实际结果", phase: "完成") }; return
                     }
                     if proposal.type == .wait {
-                        self.queue.async { self.steps += 1; self.publish("观察", "模型等待下一帧") }; return
+                        self.queue.async {
+                            guard !self.stopped, !self.paused, self.generation == capturedGeneration else { return }
+                            self.agent?.record(action: "wait", outcome: "No HID sent. Observe a newer screen.")
+                            self.steps += 1; self.publish("观察", "模型等待下一帧")
+                        }; return
                     }
-                    self.queue.async { self.publish("执行", proposal.description) }
+                    self.queue.async { if !self.stopped && !self.paused && self.generation == capturedGeneration { self.publish("执行", proposal.description) } }
                     try Task.checkCancellation()
                     guard let current = self.store.command, current.running, current.id == command.id, current.generation == capturedGeneration else { return }
+                    dispatched = true
                     try await hardware.send(proposal, expectedSession: device.session_id, frameDeadline: deadline, stillAuthorized: {
                         guard let current = self.store.command, current.running, current.id == command.id, current.generation == capturedGeneration,
                               self.store.configuration.uploadConsent else { return false }
                         return self.queue.sync { !self.stopped && !self.paused && self.frameIsStable(comparedTo: decisionFingerprint) }
+                    }, sessionAuthorized: {
+                        guard let current = self.store.command else { return false }
+                        return Date().timeIntervalSince(command.createdAt) < 300 && current.running && current.id == command.id && current.generation == capturedGeneration && self.store.configuration.uploadConsent
                     })
+                    let completedAt = Date()
                     self.queue.async {
+                        guard !self.stopped, !self.paused, self.generation == capturedGeneration else { return }
+                        let action = (try? JSONEncoder().encode(proposal)).flatMap { String(data: $0, encoding: .utf8) } ?? proposal.description
+                        self.agent?.record(action: action, outcome: "hardware_completed; UI effect must be verified in the next observation", at: completedAt)
                         self.steps += 1
-                        self.store.log("步骤 \(self.steps)：\(proposal.description)；硬件完成，等待新画面验证")
+                        self.store.log("步骤 \(self.steps)：\(proposal.description)；硬件完成，等待新画面验证", sessionID: self.sessionID)
                         self.publish("观察", "硬件已完成，等待新帧判断界面效果")
                         self.lastCapture = Date()
                     }
                 } catch is CancellationError {
-                    // Control timer / ReplayKit lifecycle owns stop and state.
+                    // Stop is independent of this cancelled task, so key/button release is still attempted.
+                    let cleanup = Task.detached { await HardwareClient(configuration: configuration).stop() }
+                    await cleanup.value
                 } catch {
-                    self.queue.async { self.pause(error.localizedDescription) }
-                    await HardwareClient(configuration: configuration).stop()
+                    // Re-observe only before any dispatch. Never retry an uncertain HID request.
+                    let reason = receivedProposal ? "Proposal discarded because its screen is stale or changed; no HID sent." : "Model request failed; no HID sent."
+                    let canRecover = requestedModel && !dispatched && self.queue.sync { () -> Bool in
+                        guard !self.stopped, !self.paused, self.generation == capturedGeneration else { return false }
+                        return self.agent?.recoverBeforeDispatch(reason) == true
+                    }
+                    if canRecover {
+                        self.queue.async { self.publish("观察", "本轮未执行，等待新画面重新规划（最多重试两次）"); self.lastCapture = Date() }
+                    } else {
+                        self.queue.async { self.pause(error.localizedDescription) }
+                        let cleanup = Task.detached { await HardwareClient(configuration: configuration).stop() }
+                        await cleanup.value
+                    }
                 }
             }
         }
@@ -181,7 +221,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
             guard let self else { return }
             self.stopped = true; self.work?.cancel(); self.timer?.cancel(); self.timer = nil
             self.endCaptureSession()
-            self.publish("停止", "系统广播已结束")
+            if self.store.status.phase != "完成" { self.publish("停止", "系统广播已结束") }
             Task { await HardwareClient(configuration: self.config).stop() }
         }
     }
@@ -206,14 +246,15 @@ final class SampleHandler: RPBroadcastSampleHandler {
     private func pause(_ reason: String) {
         guard !stopped else { return }
         paused = true
-        store.log("暂停：\(reason)")
+        store.log("暂停：\(reason)", sessionID: sessionID)
         publish("暂停", reason)
     }
     private func publish(_ phase: String, _ detail: String) {
         guard store.command?.id == sessionID else { return }
         let current = store.status
         if config.continuedProcessingEnabled == true, current.sessionID == sessionID,
-           ["暂停", "停止"].contains(current.phase) { return } // Main task owns its terminal reason.
+           ["暂停", "停止", "完成"].contains(current.phase) { return } // Main task owns its terminal reason.
+        if phase != current.phase || detail != current.detail { store.log("\(phase)：\(detail)", sessionID: sessionID) }
         try? store.write(PilotStatus(phase: phase, detail: detail, steps: steps, sessionID: sessionID), to: "status.json")
     }
     private func endCaptureSession() {
@@ -222,11 +263,11 @@ final class SampleHandler: RPBroadcastSampleHandler {
         if let frame = store.read("frame.json", as: SharedFrame.self), frame.sessionID == sessionID { store.remove("frame.json") }
         if let lease = store.read("lease.json", as: ExecutionLease.self), lease.sessionID == sessionID { store.remove("lease.json") }
     }
-    private func stopAndFinish(_ reason: String) {
+    private func stopAndFinish(_ reason: String, phase: String = "停止") {
         guard !stopped else { return }
         stopped = true; work?.cancel(); timer?.cancel(); timer = nil
         endCaptureSession()
-        publish("停止", reason)
+        publish(phase, reason)
         Task { await HardwareClient(configuration: config).stop() }
         finishBroadcastWithError(PilotError.message(reason))
     }

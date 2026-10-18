@@ -1,6 +1,12 @@
-// Copy to Local.xcconfig and fill your own registered identifiers locally.
-// Never commit Local.xcconfig or certificates/provisioning profiles.
-DEVELOPMENT_TEAM = YOUR_TEAM_ID
-PILOT_BUNDLE_PREFIX = com.yourcompany.HIDPilot
-PILOT_APP_GROUP = group.com.yourcompany.HIDPilot
-PILOT_KEYCHAIN_GROUP = $(AppIdentifierPrefix)com.yourcompany.HIDPilot.shared
+// OPTIONAL advanced overrides. A fresh install does not need this file copied.
+// Open HIDPilot.xcodeproj and select the same Team in all three targets instead.
+// To preserve an existing install's identity, or use your registered identifiers,
+// copy this file to Local.xcconfig (Git-ignored) and uncomment only what you need.
+// Never commit Local.xcconfig, certificates, provisioning profiles or secrets.
+
+// DEVELOPMENT_TEAM = YOUR_TEAM_ID
+// PILOT_BUNDLE_PREFIX = com.yourcompany.HIDPilot
+// App Group and Keychain group derive from PILOT_BUNDLE_PREFIX automatically.
+// Override them ONLY if an existing installation uses different registered groups:
+// PILOT_APP_GROUP = group.com.yourcompany.HIDPilot
+// PILOT_KEYCHAIN_GROUP = $(AppIdentifierPrefix)com.yourcompany.HIDPilot.shared

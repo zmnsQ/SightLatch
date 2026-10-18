@@ -1,5 +1,5 @@
-/* Original research prototype. NOT COMPILED OR HARDWARE TESTED.
- * Target: ESP32-S3, Arduino-ESP32 3.3.5, default Bluedroid, ArduinoJson 7.0.4.
+/* SightLatch BLE bridge. Hardware behavior requires board/iPhone verification.
+ * Targets: ESP32-C3 (official NimBLE), ESP32-S3 (Bluedroid), Arduino-ESP32 3.3.5.
  * HTTP is plaintext: isolated trusted LAN only. See ../README.md.
  * No external BLE keyboard/mouse library and no cloud server required.
  */
@@ -15,6 +15,7 @@
 #include <BLE2902.h>
 #include <esp_system.h>
 #include <atomic>
+#include <Preferences.h>
 #include "ProtocolPrimitives.h"
 using hidpilot::timeBefore;
 using hidpilot::asciiKey;
@@ -23,10 +24,10 @@ using hidpilot::asciiKey;
 #if __has_include("config.h")
 #include "config.h"
 #else
-#error "Copy config.example.h to config.h and set your own credentials/token/pins."
+#include "config.default.h"
 #endif
-#if !defined(CONFIG_IDF_TARGET_ESP32S3) || !defined(CONFIG_BLUEDROID_ENABLED)
-#error "This untested prototype targets ESP32-S3 with Arduino's default Bluedroid."
+#if (!defined(CONFIG_IDF_TARGET_ESP32S3) && !defined(CONFIG_IDF_TARGET_ESP32C3)) || (!defined(CONFIG_BLUEDROID_ENABLED) && !defined(CONFIG_NIMBLE_ENABLED))
+#error "Supported targets: ESP32-C3 / ESP32-S3 with official BLE stack."
 #endif
 
 static constexpr uint32_t MAX_TTL = 5000, MIN_INTERVAL = 50;
@@ -40,7 +41,7 @@ static std::atomic<uint32_t> pairUntil{0};
 static std::atomic<uint16_t> connId{0xffff};
 // Read/written only on the serialized Bluedroid callback task.
 static uint8_t targetAddress[6] = {0};
-static String bootId, sessionId;
+static String bootId, sessionId, controlEpoch;
 static bool armed = false;
 static uint32_t armedUntil = 0, nextSequence = 1, lastAcceptedAt = 0;
 static String lastId, lastState = "none", lastError;
@@ -78,7 +79,32 @@ static Job job;
 struct Receipt { String id, body, state; uint32_t sequence=0; };
 static Receipt receipts[16];
 static unsigned receiptCursor = 0;
+#ifndef SIGHTLATCH_SOFTWARE_CONTROL
+#define SIGHTLATCH_SOFTWARE_CONTROL 0
+#endif
+#if !SIGHTLATCH_SOFTWARE_CONTROL
 static_assert(STOP_GPIO != ARM_GPIO, "Use two distinct external button GPIOs");
+#endif
+static bool stopPressed() {
+#if SIGHTLATCH_SOFTWARE_CONTROL
+  return false;
+#else
+  return digitalRead(STOP_GPIO)==LOW;
+#endif
+}
+static bool armPressed() {
+#if SIGHTLATCH_SOFTWARE_CONTROL
+  return false;
+#else
+  return digitalRead(ARM_GPIO)==LOW;
+#endif
+}
+static String wifiSSID=WIFI_SSID, wifiPassword=WIFI_PASSWORD, controlToken=CONTROL_TOKEN;
+static Preferences preferences;
+static bool bridgeReady=false;
+static String serialLine;
+static bool serialOverflow=false;
+
 
 static String randomId() {
   char b[33];
@@ -112,10 +138,11 @@ static void finishJob(const char *state,const char *reason="") {
   job.active=false; job.text=""; lastError=reason;
 }
 static void disarm(const char *reason) {
-  finishJob("aborted",reason); armed=false; sessionId=""; nextSequence=1;
+  finishJob("aborted",reason); armed=false; sessionId=""; nextSequence=1;controlEpoch=randomId();
 }
 
 class ServerCallbacks final : public BLEServerCallbacks {
+#if defined(CONFIG_BLUEDROID_ENABLED)
   void onConnect(BLEServer *server,esp_ble_gatts_cb_param_t *p) override {
     if(!pairingOpen() || connected.exchange(true)) { server->disconnect(p->connect.conn_id); return; }
     connId.store(p->connect.conn_id); encrypted.store(false);
@@ -130,12 +157,26 @@ class ServerCallbacks final : public BLEServerCallbacks {
     emergency.store(true); pairUntil.store(0);
     // Deliberately do not auto-advertise/re-arm after loss of target.
   }
+#else
+  void onConnect(BLEServer *server,ble_gap_conn_desc *p) override {
+    if(!pairingOpen()||connected.exchange(true)){server->disconnect(p->conn_handle);return;}
+    connId.store(p->conn_handle);encrypted.store(false);
+    server->getAdvertising()->stop();
+    BLESecurity::startSecurity(p->conn_handle);
+  }
+  void onDisconnect(BLEServer *,ble_gap_conn_desc *p) override {
+    if(p->conn_handle!=connId.load())return;
+    encrypted.store(false);connected.store(false);connId.store(0xffff);
+    emergency.store(true);pairUntil.store(0);
+  }
+#endif
 };
 class SecurityCallbacks final : public BLESecurityCallbacks {
   uint32_t onPassKeyRequest() override { return 0; }
   void onPassKeyNotify(uint32_t) override {}
   bool onSecurityRequest() override { return pairingOpen(); }
   bool onConfirmPIN(uint32_t) override { return false; }
+  #if defined(CONFIG_BLUEDROID_ENABLED)
   void onAuthenticationComplete(esp_ble_auth_cmpl_t result) override {
     if(memcmp(targetAddress,result.bd_addr,sizeof(targetAddress))!=0) return;
     bool ok=result.success && connected.load() && pairingOpen() &&
@@ -144,6 +185,16 @@ class SecurityCallbacks final : public BLESecurityCallbacks {
     if(ok) pairUntil.store(0);
     else { emergency.store(true); if(connId.load()!=0xffff) bleServer->disconnect(connId.load()); }
   }
+#else
+  void onAuthenticationComplete(ble_gap_conn_desc *p) override {
+    if(!p||p->conn_handle!=connId.load())return;
+    // SC-only is enforced in ble_hs_cfg; Just Works is deliberately not MITM-authenticated.
+    bool ok=p->sec_state.encrypted&&p->sec_state.key_size==16&&connected.load()&&pairingOpen();
+    encrypted.store(ok);
+    if(ok)pairUntil.store(0);
+    else {emergency.store(true);bleServer->disconnect(p->conn_handle);}
+  }
+#endif
 };
 
 // US keyboard layout only. Chinese/UTF-8 must be rejected, never silently mangled.
@@ -187,11 +238,13 @@ static void safetyTask(void *) {
   uint32_t armDownAt=0;
   for(;;) {
     const uint32_t now=millis();
-    bool stopDown=digitalRead(STOP_GPIO)==LOW;
-    bool armDown=digitalRead(ARM_GPIO)==LOW;
+    bool stopDown=stopPressed();
+    bool armDown=armPressed();
     if(stopDown) emergency.store(true);
     xSemaphoreTake(stateLock,portMAX_DELAY);
-    if(emergency.exchange(false)) disarm("stopped_or_ble_lost");
+    if(emergency.exchange(false)) {
+      disarm("stopped_or_ble_lost");pairUntil.store(0);bleServer->getAdvertising()->stop();
+    }
     if(armed && (!usable() || WiFi.status()!=WL_CONNECTED || !timeBefore(now,armedUntil)))
       disarm("link_or_arm_lease_lost");
     if(armDown && !armWasDown) {armDownAt=now;longHandled=false;}
@@ -230,7 +283,7 @@ static void error(int code,const char *message) {
 }
 static bool authorized() {
   const String candidate=http.header("Authorization");
-  const String expected=String("Bearer ")+CONTROL_TOKEN;
+  const String expected=String("Bearer ")+controlToken;
   if(candidate.length()!=expected.length()) {error(401,"unauthorized");return false;}
   uint8_t difference=0;
   for(size_t i=0;i<expected.length();i++) difference|=(uint8_t)(candidate[i]^expected[i]);
@@ -241,11 +294,13 @@ static void statusHandler() {
   if(!authorized()) return;
   JsonDocument d;
   xSemaphoreTake(stateLock,portMAX_DELAY);
-  d["ok"]=true;d["boot_id"]=bootId;d["uptime_ms"]=millis();
+  d["ok"]=true;d["boot_id"]=bootId;d["control_epoch"]=controlEpoch;d["uptime_ms"]=millis();
   d["armed"]=armed;d["hid_connected"]=usable();d["ble_connected"]=connected.load();
   d["session_id"]=sessionId;d["next_sequence"]=nextSequence;d["max_ttl_ms"]=MAX_TTL;
   d["busy"]=job.active;d["last_action_id"]=lastId;d["last_action_state"]=lastState;
   d["last_error"]=lastError;d["pairing_open"]=pairingOpen();
+  d["control_mode"]=SIGHTLATCH_SOFTWARE_CONTROL?"software":"physical";
+  d["firmware_version"]="0.2.0-c3";
   d["transport_security"]="plaintext_http_trusted_lan_only";
   xSemaphoreGive(stateLock);respond(200,d);
 }
@@ -306,7 +361,7 @@ static void actionHandler() {
   JsonDocument result;int code=202;const char *failure=nullptr;
   xSemaphoreTake(stateLock,portMAX_DELAY);
   const uint32_t now=millis();
-  if(!armed||emergency.load()||digitalRead(STOP_GPIO)==LOW) {code=423;failure="not_armed";}
+  if(!armed||emergency.load()||stopPressed()) {code=423;failure="not_armed";}
   else if(d["boot_id"].as<String>()!=bootId||d["session_id"].as<String>()!=sessionId)
     {code=409;failure="session_mismatch";}
   else {
@@ -342,28 +397,134 @@ static void actionHandler() {
 }
 static void stopHandler() {
   if(!authorized())return;
-  emergency.store(true);
+  // Invalidate already-issued ARM/PAIR requests synchronously before acknowledging STOP.
+  xSemaphoreTake(stateLock,portMAX_DELAY);
+  controlEpoch=randomId();emergency.store(true);
+  xSemaphoreGive(stateLock);
   // Safety task handles release even if the HTTP connection disappears.
   JsonDocument d;d["ok"]=true;d["stop_requested"]=true;respond(202,d);
 }
 
+// A request may only authorize the exact control generation the user observed.
+static bool parseControlRequest(String &expectedBoot,String &expectedEpoch) {
+  String body=http.arg("plain");JsonDocument d;
+  if(body.length()>256||deserializeJson(d,body)||!d["boot_id"].is<String>()||!d["control_epoch"].is<String>()) {
+    error(400,"invalid_control_request");return false;
+  }
+  expectedBoot=d["boot_id"].as<String>();expectedEpoch=d["control_epoch"].as<String>();
+  if(expectedBoot.length()!=32||expectedEpoch.length()!=32){error(400,"invalid_control_request");return false;}
+  return true;
+}
+// Software control is opt-in by build; legacy externally wired builds keep physical gates.
+static void pairHandler() {
+  if(!authorized()) return;
+#if SIGHTLATCH_SOFTWARE_CONTROL
+  String expectedBoot,expectedEpoch;
+  if(!parseControlRequest(expectedBoot,expectedEpoch))return;
+  xSemaphoreTake(stateLock,portMAX_DELAY);
+  if(expectedBoot!=bootId||expectedEpoch!=controlEpoch) {
+    xSemaphoreGive(stateLock);error(409,"control_epoch_mismatch");return;
+  }
+  if(emergency.load()) {xSemaphoreGive(stateLock);error(409,"stop_pending");return;}
+  if(connected.load()) { xSemaphoreGive(stateLock);error(409,"already_connected");return; }
+  disarm("pairing_window");pairUntil.store(millis()+PAIR_WINDOW_MS);
+  if(!bleServer->getAdvertising()->start()){pairUntil.store(0);xSemaphoreGive(stateLock);error(503,"advertising_failed");return;}
+  xSemaphoreGive(stateLock);
+  JsonDocument d;d["ok"]=true;d["pairing_open"]=true;d["boot_id"]=bootId;
+  xSemaphoreTake(stateLock,portMAX_DELAY);d["control_epoch"]=controlEpoch;xSemaphoreGive(stateLock);respond(200,d);
+#else
+  error(403,"physical_control_required");
+#endif
+}
+static void armHandler() {
+  if(!authorized()) return;
+#if SIGHTLATCH_SOFTWARE_CONTROL
+  String expectedBoot,expectedEpoch;
+  if(!parseControlRequest(expectedBoot,expectedEpoch))return;
+  xSemaphoreTake(stateLock,portMAX_DELAY);
+  if(expectedBoot!=bootId||expectedEpoch!=controlEpoch) {
+    xSemaphoreGive(stateLock);error(409,"control_epoch_mismatch");return;
+  }
+  if(emergency.load()||!usable()||WiFi.status()!=WL_CONNECTED) {
+    xSemaphoreGive(stateLock);error(409,"hid_or_wifi_unavailable");return;
+  }
+  // An accidental retry must not extend the lease or change an active session.
+  if(!armed) {
+    releaseReports();armed=true;armedUntil=millis()+ARM_LEASE_MS;
+    sessionId=randomId();nextSequence=1;lastAcceptedAt=0;lastError="";
+    for(auto &r:receipts) r=Receipt{};
+  }
+  xSemaphoreGive(stateLock);statusHandler();
+#else
+  error(403,"physical_control_required");
+#endif
+}
+static bool validCredentials(const String &ssid,const String &password,const String &token) {
+  if(ssid.length()==0||ssid.length()>32||ssid.startsWith("YOUR_")||password.length()>63||
+     token.length()<32||token.length()>128||token.startsWith("REPLACE_")) return false;
+  for(size_t i=0;i<token.length();i++) if(token[i]<33||token[i]>126)return false;
+  return true;
+}
+// Local USB serial only. Never echo credentials; no network provisioning endpoint.
+static void serialProvision() {
+  while(Serial.available()) {
+    char c=Serial.read();
+    if(c=='\r')continue;
+    if(c!='\n') {
+      if(serialLine.length()<768&&!serialOverflow)serialLine+=c;
+      else {serialOverflow=true;serialLine="";}
+      continue;
+    }
+    if(serialOverflow){Serial.println("{\"ok\":false,\"error\":\"line_too_long\"}");serialOverflow=false;continue;}
+    JsonDocument d;
+    bool parsed=!deserializeJson(d,serialLine);serialLine="";
+    if(!parsed){Serial.println("{\"ok\":false,\"error\":\"invalid_json\"}");continue;}
+    String command=d["command"]|"";
+    if(command=="status") {
+      JsonDocument response;response["ok"]=true;response["configured"]=bridgeReady;
+      response["firmware_version"]="0.2.0-c3";response["ip"]=WiFi.localIP().toString();
+      serializeJson(response,Serial);Serial.println();continue;
+    }
+    if(command!="configure" || !d["ssid"].is<String>() || !d["password"].is<String>() || !d["token"].is<String>() ||
+       !validCredentials(d["ssid"].as<String>(),d["password"].as<String>(),d["token"].as<String>())) {
+      Serial.println("{\"ok\":false,\"error\":\"invalid_configuration\"}");continue;
+    }
+    if(bridgeReady) {emergency.store(true);delay(30);}
+    // One JSON record prevents partially updated credentials after interrupted writes.
+    String record;serializeJson(d,record);
+    bool saved=preferences.putString("config",record)==record.length();
+    record="";
+    if(saved){Serial.println("{\"ok\":true,\"configured\":true,\"restarting\":true}");Serial.flush();delay(200);ESP.restart();}
+    else Serial.println("{\"ok\":false,\"error\":\"storage_failed\"}");
+  }
+}
+
 void setup() {
   Serial.begin(115200);
+#if !SIGHTLATCH_SOFTWARE_CONTROL
   pinMode(STOP_GPIO,INPUT_PULLUP);pinMode(ARM_GPIO,INPUT_PULLUP);
-  if(strlen(CONTROL_TOKEN)<32||String(CONTROL_TOKEN).startsWith("REPLACE_")||
-     String(WIFI_SSID).startsWith("YOUR_")) {
-    Serial.println("Configure credentials and pins before use. HID disabled.");
-    for(;;) delay(1000);
+#endif
+  preferences.begin("sightlatch",false);
+  JsonDocument stored;
+  if(!deserializeJson(stored,preferences.getString("config",""))) {
+    wifiSSID=stored["ssid"].as<String>();wifiPassword=stored["password"].as<String>();controlToken=stored["token"].as<String>();
+  }
+  if(!validCredentials(wifiSSID,wifiPassword,controlToken)) {
+    Serial.println("SightLatch unconfigured. Use USB serial configuration. HID disabled.");
+    return;
   }
   stateLock=xSemaphoreCreateMutex();
   if(!stateLock){Serial.println("No mutex; halted.");for(;;)delay(1000);}
-  bootId=randomId();
+  bootId=randomId();controlEpoch=randomId();
   BLEDevice::init(BLE_DEVICE_NAME);
   bleServer=BLEDevice::createServer();bleServer->setCallbacks(new ServerCallbacks());
   bleServer->advertiseOnDisconnect(false);
   BLEDevice::setSecurityCallbacks(new SecurityCallbacks());
   BLESecurity *security=new BLESecurity();
   security->setAuthenticationMode(ESP_LE_AUTH_REQ_SC_BOND);
+#if defined(CONFIG_NIMBLE_ENABLED)
+  ble_hs_cfg.sm_sc_only=1; // Refuse legacy pairing, preserve the original SC boundary.
+#endif
   security->setCapability(ESP_IO_CAP_NONE);
   security->setKeySize(16);
   security->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK|ESP_BLE_ID_KEY_MASK);
@@ -376,19 +537,24 @@ void setup() {
   hid->reportMap(reportMap,sizeof(reportMap));hid->startServices();hid->setBatteryLevel(100);
   auto *adv=bleServer->getAdvertising();adv->setAppearance(HID_MOUSE);
   adv->addServiceUUID(hid->hidService()->getUUID());adv->setScanResponse(true);
-  // No advertising until a physical long press.
-  if(xTaskCreatePinnedToCore(safetyTask,"hid-safety",8192,nullptr,3,nullptr,1)!=pdPASS) {
+  // No advertising until an explicit authenticated software request or physical long press.
+  if(xTaskCreatePinnedToCore(safetyTask,"hid-safety",8192,nullptr,3,nullptr,tskNO_AFFINITY)!=pdPASS) {
     Serial.println("Safety task failed; halted.");for(;;)delay(1000);
   }
-  WiFi.mode(WIFI_STA);WiFi.setAutoReconnect(true);WiFi.begin(WIFI_SSID,WIFI_PASSWORD);
+  WiFi.mode(WIFI_STA);WiFi.setAutoReconnect(true);WiFi.begin(wifiSSID.c_str(),wifiPassword.c_str());
   const char *headers[]={"Authorization"};http.collectHeaders(headers,1);
   http.on("/v1/status",HTTP_GET,statusHandler);
   http.on("/v1/action",HTTP_POST,actionHandler);
   http.on("/v1/stop",HTTP_POST,stopHandler);
+  http.on("/v1/pair",HTTP_POST,pairHandler);
+  http.on("/v1/arm",HTTP_POST,armHandler);
   http.onNotFound([](){error(404,"not_found");});http.begin();
-  Serial.println("Prototype started DISARMED; hold ARM 2s to open BLE window.");
+  bridgeReady=true;
+  Serial.println("SightLatch started DISARMED. Explicit pairing and ARM required.");
 }
 void loop() {
+  serialProvision();
+  if(!bridgeReady){delay(5);return;}
   static bool printed=false;
   if(WiFi.status()==WL_CONNECTED&&!printed){
     Serial.print("Local IP: ");Serial.println(WiFi.localIP());
