@@ -188,7 +188,7 @@ struct TransferView: View {
     @State private var document = JSONDocument()
     @State private var exporting = false
     @State private var importing = false
-    @State private var filename = "HIDPilot-settings"
+    @State private var filename = "SightLatch-settings"
     @State private var exportError: String?
     var body: some View {
         NavigationStack {
@@ -196,7 +196,7 @@ struct TransferView: View {
                 Section("设置文件") {
                     Text("仅导出模型档案与非秘密配置。包含端点和局域网主机地址；不包含API Key、设备Token、任务或截图。上传同意、自动点击与校准确认在文件中重置。").font(.caption)
                     Button("导出非秘密设置", systemImage: "square.and.arrow.up") {
-                        do { document = JSONDocument(data: try model.exportSettings()); filename = "HIDPilot-settings"; exporting = true }
+                        do { document = JSONDocument(data: try model.exportSettings()); filename = "SightLatch-settings"; exporting = true }
                         catch { exportError = error.localizedDescription }
                     }.disabled(model.isSessionActive)
                     Button("导入设置（不会自动激活）", systemImage: "square.and.arrow.down") { importing = true }.disabled(model.isSessionActive)
@@ -204,7 +204,7 @@ struct TransferView: View {
                 Section("脱敏诊断") {
                     Text("包含系统版本、协议类别、阶段/步数、凭据是否存在、最近BLE/ARM状态；不含密钥、端点、模型名、任务、原始日志或截图。不会自动上传，请先查看再自行分享。").font(.caption)
                     Button("导出脱敏诊断 JSON", systemImage: "doc.text.magnifyingglass") {
-                        do { document = JSONDocument(data: try model.exportDiagnostics()); filename = "HIDPilot-diagnostics"; exporting = true }
+                        do { document = JSONDocument(data: try model.exportDiagnostics()); filename = "SightLatch-diagnostics"; exporting = true }
                         catch { exportError = error.localizedDescription }
                     }
                 }

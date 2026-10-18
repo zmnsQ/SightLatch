@@ -1,2 +1,5 @@
 a45d880b3d23d43454e41df5cf63ad4d950289f0223333606e9411cd4ae2bf97  sightlatch-0.2.0-c3-usb.bin
 eb6b142449aa98b711c74e41d3a73cc87b06bfbfe51f1102360f11c72a5c260d  sightlatch-0.2.0-c3-uart.bin
+f70aaf5accac9d69314725f82fe4efc4d2b6e3de849d4a1ca7290a5ed0418889  sightlatch-0.2.0-esp32-uart.bin
+7c191c19c8602cb645d15437df89be3bc30ed0eb1970e18c3c1b1a473fd3141a  sightlatch-0.2.0-s3-usb.bin
+98c869fbdbe3db77d5c38ad4ec68a05e6cabc5f49fd7a7f2c38963c1371980eb  sightlatch-0.2.0-s3-uart.bin

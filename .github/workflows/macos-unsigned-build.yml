@@ -19,7 +19,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          xcodebuild -project ios/HIDPilot.xcodeproj -scheme HIDPilot \
+          xcodebuild -project ios/SightLatch.xcodeproj -scheme SightLatch \
             -configuration Debug -destination 'generic/platform=iOS' \
             -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build.log
       - name: Retain compile log

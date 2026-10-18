@@ -16,11 +16,13 @@
 
 ## 1. 安装 iPhone App
 
-1. 拉取仓库，直接打开 `ios/HIDPilot.xcodeproj`，选择共享 scheme **HIDPilot**。
-2. 在 `HIDPilot`、`HIDPilotBroadcast`、`HIDPilotWidget` 三个 target 的 Signing & Capabilities 选择同一个 Development Team，保持 **Automatically manage signing** 开启。
+1. 拉取仓库，直接打开 `ios/SightLatch.xcodeproj`，选择共享 scheme **SightLatch**。
+2. 在 `SightLatch`、`SightLatchBroadcast`、`SightLatchWidget` 三个 target 的 Signing & Capabilities 选择同一个 Development Team，保持 **Automatically manage signing** 开启。
 3. 选择连接的 iPhone 并运行。系统要求开发者模式、设备信任或签名信任时，按系统提示完成。
 
 **不需要复制 `Local.example.xcconfig`，也不需要生成工程。** Bundle ID 与共享组会按 Team 派生。不要删 App Group / Keychain 权限绕过签名错误。已有安装请保留原 `Local.xcconfig`；更换标识可能变成新安装 / 新数据容器，不会自动迁移旧凭据。
+
+旧版升级：关闭旧工程窗口，重新打开 `ios/SightLatch.xcodeproj` 并选择 **SightLatch** scheme；保留原 `Local.xcconfig`，不要重置已有 Bundle ID 或共享组。
 
 ## 2. 打开烧录网页
 

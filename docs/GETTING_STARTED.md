@@ -12,7 +12,9 @@ For the shortest Chinese walkthrough, use [ESP32-C3 first run](FIRST_RUN.zh-CN.m
 
 ## 1. Install the iOS app
 
-Open `ios/HIDPilot.xcodeproj`, select the **HIDPilot** scheme and the same Development Team on **HIDPilot**, **HIDPilotBroadcast** and **HIDPilotWidget**. Keep automatic signing enabled, select your iPhone and Run. No copied local config or project generator is needed. Preserve existing local signing overrides when updating an existing installation.
+Open `ios/SightLatch.xcodeproj`, select the **SightLatch** scheme and the same Development Team on **SightLatch**, **SightLatchBroadcast** and **SightLatchWidget**. Keep automatic signing enabled, select your iPhone and Run. No copied local config or project generator is needed. Preserve existing local signing overrides when updating an existing installation.
+
+After updating an older checkout, close the old project window and open `ios/SightLatch.xcodeproj` with the **SightLatch** scheme. Do not copy or reset `Local.xcconfig`; existing bundle IDs and shared groups are preserved.
 
 Apple SDK compilation, signing and device execution remain unverified. Capture the first build error; do not delete shared entitlements to bypass it.
 

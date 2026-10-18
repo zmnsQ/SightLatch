@@ -4,7 +4,7 @@
 
 ### See the screen. Plan one step. Act through hardware.
 
-An experimental native iOS agent that connects ReplayKit screen capture, vision-capable AI APIs, and an ESP32-C3 / ESP32-S3 Bluetooth HID bridge. The iPhone observes and plans; the ESP32 performs bounded keyboard and mouse actions.
+An experimental native iOS agent that connects ReplayKit screen capture, vision-capable AI APIs, and an ESP32 / ESP32-C3 / ESP32-S3 Bluetooth HID bridge. The iPhone observes and plans; the ESP32 performs bounded keyboard and mouse actions.
 
 [简体中文](README.zh-CN.md) · [Getting started](docs/GETTING_STARTED.md) · [Architecture](docs/ARCHITECTURE.md) · [Validation](docs/TESTING.md)
 
@@ -40,12 +40,12 @@ There is no livestream publishing step and no remote server that directly contro
 ## Start with a controlled test
 
 1. Read [Getting started](docs/GETTING_STARTED.md) and the [known limits](#known-limits).
-2. Open `ios/HIDPilot.xcodeproj` in Xcode, select your Development Team for all three targets with automatic signing, and run on your iPhone. No copied config file or project generator is needed.
+2. Open `ios/SightLatch.xcodeproj` in Xcode, select your Development Team for all three targets with automatic signing, and run on your iPhone. No copied config file or project generator is needed.
 3. Flash a supported C3 variant using the [web installer guide](docs/ESP32_C3_SETUP.zh-CN.md), then configure Wi-Fi and a device token over USB. No external GPIO wiring is required.
 4. Verify the App stop control and manual pointer calibration before enabling AI steps.
 5. Use a non-sensitive test screen, inspect each action, and keep the USB power connection accessible so you can unplug it if software STOP is unconfirmed.
 
-The internal Xcode project, target names, bundle identifiers, storage identifiers, and protocol fields retain **HIDPilot** for compatibility. User-facing branding is **SightLatch**; do not rename signing or shared-container identifiers merely to match the product name.
+The Xcode project, shared scheme, targets and products are named **SightLatch**. Existing bundle identifiers, App Group / Keychain identifiers, storage formats and protocol fields retain their historical values for compatibility. Keep any existing local signing overrides when updating.
 
 ## Known limits
 
@@ -87,3 +87,5 @@ This project is licensed under [MIT](LICENSE). Third-party dependencies retain t
 ## Brand assets
 
 [SVG / PNG / iOS app icon](assets/brand/README.md) · [Visual preview](assets/brand/brand-preview.png)
+
+Additional public builds cover classic ESP32 (USB-UART) and ESP32-S3 (hardware USB Serial/JTAG / USB-UART), retaining the existing C3 images. These are compile-verified, not board/iPhone-verified. S2 and other unlisted chips are rejected. S3 uses DIO80/4MB; see the [compatibility matrix](docs/BOARD_COMPATIBILITY.zh-CN.md).

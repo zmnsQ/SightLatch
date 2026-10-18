@@ -4,7 +4,7 @@
 
 ### 让手机看见屏幕，通过硬件完成下一步操作。
 
-SightLatch 是一个原生 iOS AI 操作实验项目，将 ReplayKit 读屏、视觉模型 API 与 ESP32-C3 / ESP32-S3 蓝牙 HID 连接起来。观察、规划和指令校验在手机侧完成，硬件端负责执行有边界的键鼠动作。
+SightLatch 是一个原生 iOS AI 操作实验项目，将 ReplayKit 读屏、视觉模型 API 与 ESP32 / ESP32-C3 / ESP32-S3 蓝牙 HID 连接起来。观察、规划和指令校验在手机侧完成，硬件端负责执行有边界的键鼠动作。
 
 [English](README.md) · [开始使用](docs/GETTING_STARTED.md) · [架构说明](docs/ARCHITECTURE.md) · [验证状态](docs/TESTING.md)
 
@@ -29,11 +29,11 @@ SightLatch 是一个原生 iOS AI 操作实验项目，将 ReplayKit 读屏、�
 ## 快速开始
 
 1. 阅读[开始使用](docs/GETTING_STARTED.md)，准备 iOS 26、Xcode 和 ESP32-C3 开发板（至少 4MB Flash）。
-2. 直接打开 `ios/HIDPilot.xcodeproj`，三个 target 选择同一个 Development Team，保留自动签名后运行到 iPhone；不需复制本地配置文件。签名账户须支持所需共享能力，详见 [iOS 配置文档](ios/README.md)。
+2. 直接打开 `ios/SightLatch.xcodeproj`，三个 target 选择同一个 Development Team，保留自动签名后运行到 iPhone；不需复制本地配置文件。签名账户须支持所需共享能力，详见 [iOS 配置文档](ios/README.md)。
 3. 当前尚无已核验的线上烧录 URL；按 [C3 网页烧录指南](docs/ESP32_C3_SETUP.zh-CN.md)选择原生 USB 或 USB-UART 镜像，配置 Wi-Fi 和设备令牌；不接外部 GPIO。先验证 App 停止和手动校准。
 4. 配置你拥有权限的模型 API 或实验性 ChatGPT 套餐登录，在不含私人内容的测试屏幕上逐步验收。
 
-产品正式名称为 **SightLatch**。内部 Xcode 工程、target、bundle ID、共享存储和协议标识仍沿用 HIDPilot，以避免破坏签名、历史配置和设备协议。无需为了改名而重设这些标识。
+产品、Xcode 工程、共享 scheme、target 和构建产物均统一为 **SightLatch**。Bundle ID、App Group / Keychain、存储格式和设备协议保留历史标识，以兼容现有安装；升级时保留已有本地签名覆盖配置。
 
 ## 能力边界
 
@@ -73,3 +73,5 @@ SightLatch 是一个原生 iOS AI 操作实验项目，将 ReplayKit 读屏、�
 ## 品牌资源
 
 [SVG / PNG / iOS app icon](assets/brand/README.md) · [Visual preview](assets/brand/brand-preview.png)
+
+公共固件现增加经典 ESP32（USB-UART）与 ESP32-S3（原生 USB Serial/JTAG / USB-UART）的真实构建；保留原 C3 镜像。仍未真机验证，不支持 S2、未知芯片或所有厂商板型；S3 为 DIO80/4MB，详见[构建兼容性矩阵](docs/BOARD_COMPATIBILITY.zh-CN.md)。

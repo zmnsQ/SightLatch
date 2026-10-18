@@ -1,4 +1,4 @@
-// Fresh clone: open HIDPilot.xcodeproj and select the same Team on all targets.
+// Fresh clone: open SightLatch.xcodeproj and select the same Team on all targets.
 // Team-scoped defaults avoid the shared com.example identifier. The literal
 // "team" keeps the identifier syntactically valid in unsigned simulator builds.
 // Keep existing registered identifiers in Local.xcconfig when upgrading an install.

@@ -1,4 +1,4 @@
-# HIDPilot 本轮增量与验收（2026-10-15）
+# SightLatch 本轮增量与验收（2026-10-15）
 
 ## 范围与结论
 
@@ -32,8 +32,8 @@ Python检查验证plists/entitlements可解析、三个target与Swift引用、�
 
 ## 用户本地编译
 
-- 使用含iOS26 SDK的Xcode打开 `ios/HIDPilot.xcodeproj`，选共享HIDPilot scheme。
-- 可先运行无签名编译：`xcodebuild -project ios/HIDPilot.xcodeproj -scheme HIDPilot -configuration Debug -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build`。
+- 使用含iOS26 SDK的Xcode打开 `ios/SightLatch.xcodeproj`，选共享SightLatch scheme。
+- 可先运行无签名编译：`xcodebuild -project ios/SightLatch.xcodeproj -scheme SightLatch -configuration Debug -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build`。
 - 复制Local.example.xcconfig到Local.xcconfig，填写Team/唯一Bundle/App Group/共享Keychain配置，再签名装真机。
 - 固件按firmware/README指定ESP32-S3/core/ArduinoJson版本编译；复制config.example.h到config.h，本地填秘密与实际GPIO，再刷机。
 - 仓库保留手动触发的unsigned iOS工作流；本轮未触发，需你的Mac/CI实际运行后才有构建结论。

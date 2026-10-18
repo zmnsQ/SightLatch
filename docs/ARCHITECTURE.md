@@ -27,4 +27,4 @@ Selected frames and task text go to the configured AI endpoint after consent. LA
 
 ## Branding compatibility
 
-SightLatch replaces the public HIDPilot name. Internal project paths, bundle identifiers, Keychain service names, JSON format markers and device protocol strings deliberately remain unchanged. Display strings are not protocol identifiers.
+SightLatch names the Xcode project, shared scheme, targets, products and display strings. Bundle identifiers, App Group / Keychain groups and service names, JSON format markers and device protocol strings deliberately remain unchanged from the historical HIDPilot identity. Display strings and exported filenames are not protocol identifiers.

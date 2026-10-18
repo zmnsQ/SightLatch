@@ -26,7 +26,7 @@ class BrandAssets(unittest.TestCase):
             self.assertIn('viewBox',root.attrib)
             self.assertNotIn('<script',path.read_text())
     def test_target_wiring(self):
-        s=(ROOT/'ios/HIDPilot.xcodeproj/project.pbxproj').read_text()
+        s=(ROOT/'ios/SightLatch.xcodeproj/project.pbxproj').read_text()
         self.assertEqual(s.count('ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;'),2)
         self.assertIn('path = "App/Assets.xcassets"',s)
         phases=re.findall(r'(\w+) = \{ isa = PBXResourcesBuildPhase;.*?files = \((.*?)\);',s)

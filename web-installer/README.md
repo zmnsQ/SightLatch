@@ -1,6 +1,6 @@
 # SightLatch USB installer
 
-Desktop Chrome/Edge; Web Serial over HTTPS or localhost. All dependencies are bundled, with no runtime CDN, analytics or credential upload. The installer identifies the physical chip as ESP32-C3 and reads the SPI Flash ID to require at least 4MB before writing. Unknown Flash size fails closed. This does not establish board-level compatibility, detect every secured device, or replace hardware testing.
+Desktop Chrome/Edge; Web Serial over HTTPS or localhost. All dependencies are bundled, with no runtime CDN, analytics or credential upload. The installer identifies the physical chip and requires it to match the selected ESP32 / ESP32-C3 / ESP32-S3 family and reads the SPI Flash ID to require at least 4MB before writing. Unknown Flash size fails closed. This does not establish board-level compatibility, detect every secured device, or replace hardware testing.
 
 ```
 npm ci
@@ -13,7 +13,7 @@ npm run dev
 
 Build the images with `../scripts/build_firmware.sh` from the repository using Arduino CLI 1.3.1, official Arduino-ESP32 3.3.5 and ArduinoJson 7.0.4. Public builds refuse a private config.h. All credentials are set later over local USB, and stored unencrypted in the device NVS. Never commit credentials, serial transcripts or browser form values.
 
-Two builds support different board USB wiring: `usb` enables native C3 USB Serial/JTAG CDC on boot; `uart` uses UART0 for boards with a USB-UART bridge. Neither requires external GPIO connections. Choose the board's actual wiring; flashing detection alone does not determine this. A wrong selection can still flash but won't receive provisioning commands on the selected interface. Reflash the correct variant.
+C3 has two builds for different board USB wiring: `usb` enables native C3 USB Serial/JTAG CDC on boot; `uart` uses UART0 for boards with a USB-UART bridge. Neither requires external GPIO connections. Choose the board's actual wiring; flashing detection alone does not determine this. A wrong selection can still flash but won't receive provisioning commands on the selected interface. Reflash the correct variant.
 
 The merged C3 image starts at 0x0, partition table at 0x8000 and app at 0x10000, verified by the packaging script against the Arduino-generated image. This is not the classic ESP32 0x1000 bootloader layout. Full erasure is explicit and removes prior firmware, NVS credentials and BLE bonds. SHA-256 validates downloads and esptool-js verifies written image MD5. No USB device was accessed during development.
 
@@ -22,3 +22,7 @@ Official references checked 2026-10-18:
 - https://docs.espressif.com/projects/esptool/en/latest/esp32c3/esptool/flashing-firmware.html
 - https://docs.espressif.com/projects/esptool/en/latest/esp32c3/advanced-topics/boot-mode-selection.html
 - https://github.com/espressif/arduino-esp32/tree/3.3.5
+
+## Additional built targets
+
+The selector also supports classic ESP32 (UART only) and ESP32-S3 (hardware USB Serial/JTAG or UART). Physical chip must match the selected family; changing family disconnects and clears erase consent. S3 requires DIO 80MHz-compatible Flash; OPI-only Flash boards are not supported. All layouts remain 4MB. See [the build-only compatibility matrix](../docs/BOARD_COMPATIBILITY.zh-CN.md). S2 has no BLE and is rejected. Build evidence is not hardware validation.

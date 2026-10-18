@@ -1,6 +1,6 @@
-# ESP32-C3 零外接引脚 / S3 旧原型
+# ESP32 / C3 / S3 公共零外接引脚构建
 
-当前 C3 安装与软件控制请看 [零引脚安装说明](../docs/ESP32_C3_SETUP.zh-CN.md) 和 [网页安装器](../web-installer/README.md)。默认公共构建不需要 config.h 或外接按钮，凭据经 USB 写入，配对/授权/停止从 App 发起。以下 S3 按钮步骤是旧 config.h 模式的历史说明，不适用于公共 C3 镜像。
+公共构建兼容性以[矩阵](../docs/BOARD_COMPATIBILITY.zh-CN.md)为准。C3 安装与软件控制请看 [零引脚安装说明](../docs/ESP32_C3_SETUP.zh-CN.md) 和 [网页安装器](../web-installer/README.md)。默认公共构建不需要 config.h 或外接按钮，凭据经 USB 写入，配对/授权/停止从 App 发起。以下 S3 按钮步骤是旧 config.h 模式的历史说明，不适用于任何公共零 GPIO 镜像。
 
 # ESP32-S3 本地 HTTP → BLE 键鼠原型
 
@@ -114,3 +114,7 @@ completed只表示发送工作已完成；上层仍要新的读屏帧确认效�
 4. 重复相同请求、旧sequence、旧session、旧boot、过期时间、超长text，确认不多执行。
 5. 执行drag/text期间按STOP、拔Wi-Fi、关蓝牙，确认无持续卡键；重新连接/ARM不重放。
 6. 最后才接入ReplayKit+AI，每次只准一小步；不要用真实支付或聊天发送作为初测。
+
+## 新增芯片构建
+
+经典 ESP32（UART）和 ESP32-S3（原生 USB Serial/JTAG / UART）的公共零 GPIO 镜像见 [兼容性矩阵](../docs/BOARD_COMPATIBILITY.zh-CN.md)。仅构建通过，不是板级或 iPhone 真机验证；S3 使用官方 DIO80，S2 无 BLE 不支持。已有 C3 镜像保持不变。

@@ -20,19 +20,19 @@
 
 ## 工程与系统
 
-打开 `HIDPilot.xcodeproj`，选择共享 scheme `HIDPilot`。包含：
+打开 `SightLatch.xcodeproj`，选择共享 scheme `SightLatch`。包含：
 
-- HIDPilot：SwiftUI 主 App，任务主页、状态卡、iOS 26 原生 Liquid Glass 底栏、分层设置与人工校准面板。
-- HIDPilotBroadcast：ReplayKit Broadcast Upload Extension，`RPBroadcastSampleHandler` 处理视频帧，不处理音频。
-- HIDPilotWidget：WidgetKit Live Activity / Dynamic Island 展示。
+- SightLatch：SwiftUI 主 App，任务主页、状态卡、iOS 26 原生 Liquid Glass 底栏、分层设置与人工校准面板。
+- SightLatchBroadcast：ReplayKit Broadcast Upload Extension，`RPBroadcastSampleHandler` 处理视频帧，不处理音频。
+- SightLatchWidget：WidgetKit Live Activity / Dynamic Island 展示。
 
 使用 Xcode 26 或更新的兼容 Xcode / iOS SDK（源码调用 iOS 26 glassEffect，需要对应SDK才能编译）。部署下限18.0是为了可用性降级，不表示已验证18或26.5.2；代码不依赖任何iOS27功能。目标设备为iPhone。没有第三方Swift依赖、没有复制无许可证仓库源码。已包含原创 AppIcon 与深浅色品牌标记；尚未提供 App Store 上架素材。
 
 ### 首次签名：只选自己的 Team
 
-1. 打开工程后，在 `HIDPilot`、`HIDPilotBroadcast`、`HIDPilotWidget` 的 Signing & Capabilities 选择同一 Development Team，保持 Automatically manage signing 开启。
+1. 打开工程后，在 `SightLatch`、`SightLatchBroadcast`、`SightLatchWidget` 的 Signing & Capabilities 选择同一 Development Team，保持 Automatically manage signing 开启。
 2. 公共配置会用 `com.sightlatch.team<所选TeamID>.HIDPilot` 派生主 App 与两个扩展的 Bundle ID、共同 App Group，以及主 App / Broadcast 的 Keychain group。Keychain 前缀仍用系统提供的 `$(AppIdentifierPrefix)`，不假定它等于 Team ID。Widget 不读取密钥。
-3. 选择 iPhone 并运行 HIDPilot；两个扩展随主 App 安装。账户必须支持所需能力并允许 Xcode 配置签名。免费 Personal Team 可能不满足 App Groups 等要求，以 Xcode 实际结果为准，不要删除共享权限绕过。
+3. 选择 iPhone 并运行 SightLatch；两个扩展随主 App 安装。账户必须支持所需能力并允许 Xcode 配置签名。免费 Personal Team 可能不满足 App Groups 等要求，以 Xcode 实际结果为准，不要删除共享权限绕过。
 4. 安装后首次解锁设备才能读取共享凭据。Keychain 使用 `AfterFirstUnlockThisDeviceOnly`，不云同步；卸载 App 并不保证删除 Keychain 内容。
 
 ### 可选：保留既有标识 / 自定义签名

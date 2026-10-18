@@ -4,6 +4,7 @@ from pathlib import Path
 import plistlib
 import re
 import unittest
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 def source(name):
@@ -20,13 +21,84 @@ class SourceContracts(unittest.TestCase):
                 plistlib.load(f)
 
     def test_all_swift_files_are_referenced(self):
-        project = source("ios/HIDPilot.xcodeproj/project.pbxproj")
+        project = source("ios/SightLatch.xcodeproj/project.pbxproj")
         for path in (ROOT / "ios").rglob("*.swift"):
             self.assertIn(str(path.relative_to(ROOT / "ios")), project)
         refs = re.findall(r'path = "([^"]+\.(?:swift|plist|entitlements|xcconfig))"', project)
         for ref in refs:
             self.assertTrue((ROOT / "ios" / ref).is_file(), ref)
         self.assertEqual(project.count("isa = PBXNativeTarget"), 3)
+
+    def test_sightlatch_project_scheme_products_and_embedding(self):
+        project_path = ROOT / "ios/SightLatch.xcodeproj"
+        self.assertFalse((ROOT / "ios/HIDPilot.xcodeproj").exists())
+        project = source("ios/SightLatch.xcodeproj/project.pbxproj")
+        # Objects occupy one line in this checked-in project. Follow UUID links,
+        # rather than merely asserting that the new names occur somewhere.
+        objects = dict(re.findall(r'^\s*([A-F0-9]{24}) = (.+);$', project, re.M))
+        def field(obj, key):
+            match = re.search(r'\b' + key + r' = ("[^"\n]*"|[^;]+);', obj)
+            self.assertIsNotNone(match, (key, obj))
+            return match[1].strip('"')
+        def ids(obj, key):
+            return field(obj, key).strip('()').strip(',').split(',')
+        targets = {field(obj, "name"): (uid, obj) for uid, obj in objects.items()
+                   if "isa = PBXNativeTarget;" in obj}
+        self.assertEqual(set(targets), {"SightLatch", "SightLatchBroadcast", "SightLatchWidget"})
+        products = {}
+        for name, (uid, obj) in targets.items():
+            self.assertEqual(field(obj, "productName"), name)
+            product = field(obj, "productReference")
+            products[name] = product
+            suffix = ".app" if name == "SightLatch" else ".appex"
+            self.assertEqual(field(objects[product], "path"), name + suffix)
+            configs = objects[field(obj, "buildConfigurationList")]
+            for config_id in ids(configs, "buildConfigurations"):
+                self.assertEqual(field(objects[config_id], "PRODUCT_NAME"), name)
+        app_id, app = targets["SightLatch"]
+        dependencies = [objects[uid] for uid in ids(app, "dependencies")]
+        self.assertEqual({field(obj, "target") for obj in dependencies},
+                         {targets[name][0] for name in targets if name != "SightLatch"})
+        for dependency in dependencies:
+            target_id = field(dependency, "target")
+            proxy = objects[field(dependency, "targetProxy")]
+            self.assertEqual(field(proxy, "remoteGlobalIDString"), target_id)
+            self.assertEqual(field(proxy, "remoteInfo"), field(objects[target_id], "name"))
+        embed = [objects[uid] for uid in ids(app, "buildPhases")
+                 if "isa = PBXCopyFilesBuildPhase;" in objects[uid]]
+        self.assertEqual(len(embed), 1)
+        self.assertEqual(field(embed[0], "dstSubfolderSpec"), "13")
+        self.assertEqual({field(objects[uid], "fileRef") for uid in ids(embed[0], "files")},
+                         {products["SightLatchBroadcast"], products["SightLatchWidget"]})
+        schemes = list(project_path.glob("xcshareddata/xcschemes/*.xcscheme"))
+        self.assertEqual([p.name for p in schemes], ["SightLatch.xcscheme"])
+        refs = ET.parse(schemes[0]).findall(".//BuildableReference")
+        self.assertGreaterEqual(len(refs), 2)
+        for ref in refs:
+            self.assertEqual(ref.get("BlueprintIdentifier"), app_id)
+            self.assertEqual(ref.get("BlueprintName"), "SightLatch")
+            self.assertEqual(ref.get("BuildableName"), "SightLatch.app")
+            self.assertEqual(ref.get("ReferencedContainer"), "container:SightLatch.xcodeproj")
+        for folder, display in (("App", "SightLatch"), ("Broadcast", "SightLatch Broadcast"),
+                                ("Widget", "SightLatch Widget")):
+            info = plistlib.loads((ROOT / "ios" / folder / "Info.plist").read_bytes())
+            self.assertEqual(info["CFBundleDisplayName"], display)
+            self.assertEqual(info["CFBundleName"], "$(PRODUCT_NAME)")
+            self.assertEqual(info["CFBundleExecutable"], "$(EXECUTABLE_NAME)")
+        broadcast = plistlib.loads((ROOT / "ios/Broadcast/Info.plist").read_bytes())
+        self.assertEqual(broadcast["NSExtension"]["NSExtensionPrincipalClass"],
+                         "$(PRODUCT_MODULE_NAME).SampleHandler")
+
+    def test_rename_preserves_persistent_identities(self):
+        self.assertIn("PILOT_BUNDLE_PREFIX = com.sightlatch.team$(DEVELOPMENT_TEAM).HIDPilot",
+                      source("ios/Config/Project.xcconfig"))
+        for path in ("ios/Shared/SharedStore.swift", "ios/Shared/ChatGPTOAuth.swift"):
+            self.assertIn('kSecAttrService as String: "HIDPilot"', source(path))
+        self.assertIn('var format = "HIDPilot-settings"', source("ios/App/Workspace.swift"))
+        self.assertIn('archive.format == "HIDPilot-settings"', source("ios/App/Workspace.swift"))
+        ui = source("ios/App/WorkspaceViews.swift")
+        self.assertIn('"SightLatch-settings"', ui)
+        self.assertIn('"SightLatch-diagnostics"', ui)
 
     def test_fresh_clone_signing_configuration(self):
         config = source("ios/Config/Project.xcconfig")
@@ -38,7 +110,7 @@ class SourceContracts(unittest.TestCase):
         example = source("ios/Config/Local.example.xcconfig")
         self.assertFalse(any(line.strip() and not line.strip().startswith("//")
                              for line in example.splitlines()))
-        project = source("ios/HIDPilot.xcodeproj/project.pbxproj")
+        project = source("ios/SightLatch.xcodeproj/project.pbxproj")
         configs = re.findall(r'isa = XCBuildConfiguration;[^\n]+', project)
         target_configs = [line for line in configs if "PRODUCT_BUNDLE_IDENTIFIER" in line]
         self.assertEqual(len(target_configs), 6)  # three targets, Debug and Release

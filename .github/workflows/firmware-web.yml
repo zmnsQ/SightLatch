@@ -1,4 +1,4 @@
-name: Build C3 firmware and USB installer
+name: Build ESP32 family firmware and USB installer
 on:
   push:
     paths: ['firmware/**', 'web-installer/**', 'scripts/*firmware*', '.github/workflows/firmware-web.yml']
@@ -21,9 +21,10 @@ jobs:
           arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
           arduino-cli core install esp32:esp32@3.3.5 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
           arduino-cli lib install ArduinoJson@7.0.4
-      - name: Compile actual C3 images and generate manifest
+      - name: Compile actual ESP32 / C3 / S3 images and generate manifest
         run: |
           scripts/build_firmware.sh
+          scripts/build_extended_firmware.sh
           python3 scripts/verify_firmware.py
           python3 tests/check_c3_firmware.py
       - uses: actions/setup-node@v4
