@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <unistd.h>
+#include <net/if.h>
 #include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -26,6 +27,9 @@
 #include "mbedtls/platform_util.h"
 #include "usb_link.h"
 #include "pairing_verifier.h"
+#include "wifi_link.h"
+#include "lwip/sockets.h"
+#include "lwip/inet.h"
 #if !CONFIG_IDF_TARGET_ESP32S3
 #error "USB NCM+HID requires ESP32-S3. ESP32-C3 Serial/JTAG cannot run this target."
 #endif
@@ -44,7 +48,8 @@ static protocomm_security2_params_t sec = {
 };
 static int64_t pair_until, session_until, armed_until;
 static uint32_t next_sequence=1;
-static char control_token[129];
+static char control_token[129], wifi_ssid[33], wifi_password[64];
+static bool wifi_apply_pending, handshake_in_progress, wifi_transition;
 static bool configured, armed, provisioned_in_window;
 static bool release_requested=true;
 static struct { bool active, sent; int kind,a,b,c; int64_t expires, release_at; } job;
@@ -78,6 +83,8 @@ static esp_err_t reply(const char *error,uint8_t **out,ssize_t *len) {
     cJSON_AddBoolToObject(r,"ok",error==NULL);
     if(error) cJSON_AddStringToObject(r,"error",error);
     cJSON_AddBoolToObject(r,"configured",configured);
+    cJSON_AddBoolToObject(r,"wifi_connected",wifi_link_connected());
+    cJSON_AddStringToObject(r,"wifi_state",wifi_link_state());
     cJSON_AddBoolToObject(r,"armed",armed);
     cJSON_AddBoolToObject(r,"hid_connected",usb_link_ready());
     cJSON_AddBoolToObject(r,"pairing_open",pairing_open());
@@ -117,13 +124,14 @@ static esp_err_t command(uint32_t session_id,const uint8_t *in,ssize_t len,uint8
                 if(e==ESP_OK)e=nvs_commit(store);
                 if(encoded){mbedtls_platform_zeroize(encoded,strlen(encoded));free(encoded);}cJSON_Delete(record);
                 if(e!=ESP_OK)error="storage_failed";
-                else {strlcpy(control_token,token,sizeof(control_token));configured=true;provisioned_in_window=true;pair_until=0;disarm();}
+                else {strlcpy(control_token,token,sizeof(control_token));strlcpy(wifi_ssid,ssid,sizeof(wifi_ssid));strlcpy(wifi_password,password,sizeof(wifi_password));wifi_apply_pending=true;configured=true;provisioned_in_window=true;pair_until=0;disarm();}
             }
         } else if(!token_matches(str(o,"token"))) error="unauthorized";
         else if(strcmp(op,"status")==0) { /* no side effect */ }
         else if(strcmp(op,"stop")==0) disarm();
         else if(strcmp(op,"arm")==0) {
-            if(!usb_link_ready())error="hid_unavailable";
+            if(wifi_transition)error="wifi_transition";
+            else if(!usb_link_ready())error="hid_unavailable";
             else {disarm();armed=true;armed_until=now_ms()+60000;}
         } else if(!armed||now_ms()>=armed_until) error="not_armed";
         else if(!usb_link_ready())error="hid_unavailable";
@@ -159,7 +167,23 @@ static bool valid_handshake(const uint8_t *body,size_t length) {
     if(m)session_data__free_unpacked(m,NULL);
     return valid;
 }
+static esp_err_t usb_socket_open(httpd_handle_t handle,int fd) {
+    (void)handle;
+    struct ifreq interface={0};
+    esp_netif_t *netif=esp_netif_get_handle_from_ifkey("USB_NCM");
+    if(!netif || esp_netif_get_netif_impl_name(netif,interface.ifr_name)!=ESP_OK)return ESP_FAIL;
+    // Bind accepted TCP PCB before reading any request. Local IP check below is
+    // extra defense, not an interface authenticator (lwIP is otherwise weak-host).
+    return setsockopt(fd,SOL_SOCKET,SO_BINDTODEVICE,&interface,sizeof(interface))==0?ESP_OK:ESP_FAIL;
+}
 static esp_err_t http_request(httpd_req_t *req) {
+    // esp_http_server listens on all interfaces. Never accept this API via STA:
+    // inspect the LOCAL socket address (not attacker-supplied Host headers).
+    struct sockaddr_in local={0};socklen_t address_len=sizeof(local);
+    if(getsockname(httpd_req_to_sockfd(req),(struct sockaddr *)&local,&address_len)!=0 ||
+       local.sin_family!=AF_INET || local.sin_addr.s_addr!=inet_addr("192.168.7.1")){
+        httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"USB interface required");return ESP_FAIL;
+    }
     // Exactly one Security2 logical session per physical window, independent of
     // HTTP TCP reconnects. No cookies or security0 fallback. AES-GCM counters
     // authenticate and order all post-handshake bodies via official protocomm.
@@ -184,9 +208,18 @@ static esp_err_t http_request(httpd_req_t *req) {
     if(handshake && !valid_handshake(body,have)){free(body);httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"invalid handshake");return ESP_FAIL;}
     // With RF disabled, enable S3 internal entropy while Security2 creates SRP
     // secrets and the GCM session ID. No application ADC/RF users in this target.
-    if(handshake)bootloader_random_enable();
+    if(handshake){
+        xSemaphoreTake(lock,portMAX_DELAY);
+        if(!pairing_open()){xSemaphoreGive(lock);free(body);return ESP_FAIL;}
+        handshake_in_progress=true;
+        xSemaphoreGive(lock);
+        bootloader_random_enable();
+    }
     esp_err_t e=protocomm_req_handle(pc,handshake?"prov-session":"usb-command",1,body,have,&out,&outlen);
-    if(handshake)bootloader_random_disable();
+    if(handshake){
+        bootloader_random_disable();
+        xSemaphoreTake(lock,portMAX_DELAY);handshake_in_progress=false;xSemaphoreGive(lock);
+    }
     mbedtls_platform_zeroize(body,have);free(body);
     httpd_resp_set_hdr(req,"Cache-Control","no-store");
     httpd_resp_set_type(req,"application/octet-stream");
@@ -197,6 +230,13 @@ static esp_err_t http_request(httpd_req_t *req) {
 static void open_pairing(void) {
     // Main task only. Stop old HTTP task before replacing security material.
     if(server){httpd_stop(server);server=NULL;}
+    // Pause STA before using the S3 internal ADC entropy source. Do not start
+    // authentication if RF shutdown failed. Restore STA after the window closes.
+    if(wifi_link_pause()!=ESP_OK){
+        xSemaphoreTake(lock,portMAX_DELAY);disarm();pair_until=0;session_until=0;xSemaphoreGive(lock);
+        return;
+    }
+    wifi_apply_pending=configured;
     if(pc){protocomm_close_session(pc,1);protocomm_delete(pc);pc=NULL;}
     xSemaphoreTake(lock,portMAX_DELAY);disarm();pair_until=0;session_until=0;xSemaphoreGive(lock);
     usb_link_release();
@@ -223,7 +263,7 @@ static void open_pairing(void) {
     ESP_ERROR_CHECK(protocomm_set_security(pc,"prov-session",&protocomm_security2,&sec));
     ESP_ERROR_CHECK(protocomm_add_endpoint(pc,"usb-command",command,NULL));
     ESP_ERROR_CHECK(protocomm_open_session(pc,1));
-    httpd_config_t cfg=HTTPD_DEFAULT_CONFIG();cfg.stack_size=12288;cfg.max_open_sockets=2;cfg.recv_wait_timeout=3;cfg.send_wait_timeout=3;
+    httpd_config_t cfg=HTTPD_DEFAULT_CONFIG();cfg.stack_size=12288;cfg.max_open_sockets=2;cfg.recv_wait_timeout=3;cfg.send_wait_timeout=3;cfg.open_fn=usb_socket_open;
     ESP_ERROR_CHECK(httpd_start(&server,&cfg));
     const httpd_uri_t session_uri={.uri="/prov-session",.method=HTTP_POST,.handler=http_request};
     const httpd_uri_t command_uri={.uri="/usb-command",.method=HTTP_POST,.handler=http_request};
@@ -239,11 +279,12 @@ void app_main(void) {
     // Do not erase NVS automatically on errors: preserving existing credentials matters.
     ESP_ERROR_CHECK(nvs_flash_init());ESP_ERROR_CHECK(nvs_open("sightlatch",NVS_READWRITE,&store));
     size_t size=0;if(nvs_get_str(store,"config",NULL,&size)==ESP_OK&&size>0&&size<=1024){
-        char *s=malloc(size);if(s&&nvs_get_str(store,"config",s,&size)==ESP_OK){cJSON *r=cJSON_Parse(s);const char *t=str(r,"token");if(ascii(t,32,128)){strlcpy(control_token,t,sizeof(control_token));configured=true;}if(r){for(cJSON *v=r->child;v;v=v->next)if(cJSON_IsString(v))mbedtls_platform_zeroize(v->valuestring,strlen(v->valuestring));cJSON_Delete(r);}mbedtls_platform_zeroize(s,size);}free(s);
+        char *s=malloc(size);if(s&&nvs_get_str(store,"config",s,&size)==ESP_OK){cJSON *r=cJSON_Parse(s);const char *t=str(r,"token"),*ssid=str(r,"ssid"),*password=str(r,"password");if(ascii(t,32,128)&&ssid&&strlen(ssid)>0&&strlen(ssid)<=32&&password&&(password[0]==0||ascii(password,8,63))){strlcpy(control_token,t,sizeof(control_token));strlcpy(wifi_ssid,ssid,sizeof(wifi_ssid));strlcpy(wifi_password,password,sizeof(wifi_password));configured=true;wifi_apply_pending=true;}if(r){for(cJSON *v=r->child;v;v=v->next)if(cJSON_IsString(v))mbedtls_platform_zeroize(v->valuestring,strlen(v->valuestring));cJSON_Delete(r);}mbedtls_platform_zeroize(s,size);}free(s);
     }
     lock=xSemaphoreCreateMutex();assert(lock);
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(usb_link_init());
+    ESP_ERROR_CHECK(wifi_link_init());
     gpio_config_t io={.pin_bit_mask=1ULL<<CONFIG_SIGHTLATCH_PAIR_GPIO,.mode=GPIO_MODE_INPUT,.pull_up_en=GPIO_PULLUP_ENABLE};ESP_ERROR_CHECK(gpio_config(&io));
     puts("SightLatch USB experimental: hold physical button 3s to pair; any press stops HID.");
     int64_t pressed=0;bool opened=false,was_ready=false;
@@ -262,7 +303,17 @@ void app_main(void) {
                 if(sent){job.sent=true;job.release_at=now+40;if(job.kind==1)job.active=false;}
             } else if(now>=job.release_at){release_requested=!usb_link_release();job.active=false;}
         }
+        bool apply_wifi=wifi_apply_pending&&!pairing_open()&&!handshake_in_progress&&!armed&&!job.active&&!release_requested;
+        char apply_ssid[33]={0},apply_password[64]={0};
+        if(apply_wifi){wifi_transition=true;strlcpy(apply_ssid,wifi_ssid,sizeof(apply_ssid));strlcpy(apply_password,wifi_password,sizeof(apply_password));wifi_apply_pending=false;}
         xSemaphoreGive(lock);
+        if(apply_wifi){
+            // Only one attempt per boot/configuration/window, never an unbounded retry loop.
+            (void)wifi_link_apply(apply_ssid,apply_password);
+            xSemaphoreTake(lock,portMAX_DELAY);wifi_transition=false;xSemaphoreGive(lock);
+            mbedtls_platform_zeroize(apply_password,sizeof(apply_password));
+            mbedtls_platform_zeroize(apply_ssid,sizeof(apply_ssid));
+        }
         if(down){if(!pressed)pressed=now;if(!opened&&now-pressed>=3000){opened=true;open_pairing();}}
         else {pressed=0;opened=false;}
         vTaskDelay(pdMS_TO_TICKS(10));

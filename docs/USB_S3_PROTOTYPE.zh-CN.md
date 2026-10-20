@@ -8,9 +8,9 @@
 - ESP32-S3 的 USB OTG 口（GPIO19/20）才适用。板子上的 USB-UART 口不是同一个口。
 - ESP32-C3 的 USB Serial/JTAG 不是通用 USB OTG；不能升级固件变成该 NCM+HID 设备。现有 C3、ESP32、S3 BLE 构建与网页镜像保持不变。
 - 此版本是独立**有线实验模式**，不是一个镜像里自动切换 USB/BLE 的完整双模产品。原有 Wi-Fi→BLE 路径仍使用旧目标。
-- 新目标把 Wi-Fi/Token 保存为兼容的 `sightlatch/config` NVS JSON，但不启动 Wi-Fi 或 BLE，不对 LAN 暴露控制服务器，也未验证 Wi-Fi 接入成功。不要将“写入成功”解释为“联网成功”。重新刷回旧目标并保留 NVS，才能由原固件使用该配置。
+- 新目标把 Wi-Fi/Token 保存为兼容的 `sightlatch/config` NVS JSON，在配对窗口关闭后尝试一次 STA 连接，报告取得IP与否。不会启动 SoftAP 或 BLE。不要将“写入成功”解释为“联网成功”；Wi-Fi失败不影响USB本地链路。旧BLE固件也能读同一个配置记录。
 - App 新的 USB 设置页是独立实验入口；既有聊天/自动操作代理仍走旧 HardwareClient，尚未接入此有线协议。不伪称自动化任务已支持 USB。
-- 没有刷机、发布 Release、部署网页安装器或更改用户设备。构建验证结果应以本分支后续的明确报告为准。
+- 没有刷机、发布 Release、部署网页安装器或更改用户设备。2026-10-20 对首版提交 `4e6c25e` 的独立构建尝试在依赖解析阶段被 `components-file.espressif.com` 的 CONNECT 403 阻断，未进入C编译，未产生固件或依赖锁文件；后续STA整合也未编译。这是依赖获取阻断，不是“编译通过”或已确认的代码编译失败。
 
 ## 安全的手机直连首配
 
@@ -61,7 +61,7 @@ python3 "$IDF_PATH/components/nvs_flash/nvs_partition_generator/nvs_partition_ge
 - HID report ID1 =键盘，ID2 =相对鼠标；没有绝对触控、多点或中文输入。
 - 描述符 MAC string index5 与 `esp_tinyusb` 内部编号一致；主机NIC与设备IP栈使用不同MAC。
 - IP `192.168.7.1/24`，DHCP不提供默认网关/DNS，不做互联网路由。仍须验证 iOS 是否保留可用的 Wi-Fi/蜂窝路由。
-- HTTP只是承载加密二进制的本地 transport，不提供明文 Bearer HTTP端点，不开放 CORS，不接受凭据query。
+- HTTP只是承载加密二进制的本地 transport，不提供明文 Bearer HTTP端点，不开放 CORS，不接受凭据query。HTTP accepted socket在读数据前用SO_BINDTODEVICE绑定USB接口，并复核本地IP；不能仅用Host头或IP地址冒充接口边界。STA上线后也不允许从Wi-Fi使用这个控制API。
 - POST `/prov-session`：官方 protocomm Security2，固定 username `sightlatch`，sec_ver2/sec_patch_ver1。只在物理60秒窗口接受握手。
 - POST `/usb-command`：Security2加解密后的JSON。单一逻辑session id1可跨TCP连接，但无跨设备、跨重新配对状态复用；TCP不是认证凭据。
 - SDK依赖固定revision；握手直接 `initialiseSession`，不调用会加入Wi-Fi的 `connect()`。命令绕过SDK自动重试，用无重定向/缓存的独立URLSession传递官方securityLayer加密结果。
@@ -77,7 +77,7 @@ python3 "$IDF_PATH/components/nvs_flash/nvs_partition_generator/nvs_partition_ge
 
 其它命令须带已配置token（同样在AES-GCM正文内）：
 
-- `status`：查询已配置、ARM、USB报告的连接状态。
+- `status`：查询已配置、ARM、USB报告的连接状态及Wi-Fi取得IP状态。配对期间RF暂停，窗口结束后最多尝试一次连接，不无限重试。
 - `arm`：60秒租约，USB已连接才允许；不发送操作动作。
 - `stop`：解除并清队列。
 - `move`：dx/dy各-127..127。
@@ -88,7 +88,7 @@ python3 "$IDF_PATH/components/nvs_flash/nvs_partition_generator/nvs_partition_ge
 
 ## 验证清单
 
-已提供 `python3 tests/check_usb_prototype.py`：假码生成器权限/不泄露、固定长度前导零盐测试、源级安全回归。它不是编译、加密互通或USB测试。
+已提供 `python3 tests/check_usb_prototype.py`：假码生成器权限/不泄露、固定长度前导零盐测试、STA单次/RAM模式和源级安全回归。它不是编译、加密互通或USB测试。
 
 构建环境继续：
 1. IDF5.5.2完整编译，确认managed component2.4.0和tinyusb解析版本，记录依赖锁文件。
@@ -96,7 +96,7 @@ python3 "$IDF_PATH/components/nvs_flash/nvs_partition_generator/nvs_partition_ge
 3. 运行Security2客户端/设备互通测试，错误PoP、旧GCM包/序号、过期窗口和凭据长度边界必须拒绝。
 4. 真机先不ARM测NCM枚举/DHCP；验证旧标签、无标签默认拒绝、重新配对旧会话失效。
 5. 空白测试页单次微移/点击/键，验证急停、拔线、挂起、租约和掉电；禁止拿支付、真实发消息或删除当测试。
-6. 验证重启NVS读回和旧BLE镜像兼容。固件未连接Wi-Fi，不用保存成功替代此测试。
+6. 验证重启NVS读回、STA连接/错误密码/超时状态以及旧BLE镜像兼容。不用保存成功替代联网验证。验证Wi-Fi侧无法调用USB API，即使伪造Host头或将目标路由指向USB IP。
 
 ## 上游来源
 
@@ -107,5 +107,7 @@ python3 "$IDF_PATH/components/nvs_flash/nvs_partition_generator/nvs_partition_ge
 - https://developer.apple.com/forums/thread/844110
 - https://github.com/espressif/esp-idf/tree/v5.5.2/components/protocomm
 - https://github.com/espressif/esp-idf-provisioning-ios/tree/78e58f010f8539f800bce063a26d3e4c4ac596b9
+
+物理配对前先确认STA停止，Security2握手期间启用S3内部熵源；窗口关闭后才恢复STA，避免ADC熵源与RF并发使用。Wi-Fi无凭据时不会连接。
 
 SRP verifier生成沿用官方Security2的RFC5054/SHA512参数，不是另建握手协议。固定32字节salt避免IDF5.5.2便捷生成API经MPI序列化裁去前导零但未返回实际长度的边界；无论salt首字节是否0都保留其完整长度。

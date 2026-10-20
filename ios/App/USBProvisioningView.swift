@@ -16,6 +16,8 @@ private struct USBCommandReply: Decodable {
     let ok: Bool
     let error: String?
     let configured: Bool
+    let wifi_connected: Bool?
+    let wifi_state: String?
     let armed: Bool
     let hid_connected: Bool
     let pairing_open: Bool
@@ -158,7 +160,7 @@ private final class USBProvisioningClient: ObservableObject {
             busy = false
             if reply.ok {
                 switch op {
-                case "provision": notice = "配置已写入板上 NVS，物理窗口已关闭；App 不保存这些凭据。Wi-Fi 配置仅保存，当前固件不启用 Wi-Fi。"
+                case "provision": notice = "配置已写入板上 NVS，物理窗口已关闭，板端将尝试一次 Wi-Fi 连接；请查询状态确认，写入成功不等于联网成功。App 不保存这些凭据。"
                 case "arm": notice = "ARM 已确认，最长 60 秒。仅在安全测试页面手动测试。"
                 case "stop": notice = "STOP 已确认；板端已撤销 ARM 并安排释放输入。实际 HID 接收仍需实机验证。"
                 case "move": notice = "2 单位移动请求已接受，不代表 iPhone 已执行。"
@@ -217,7 +219,7 @@ struct USBProvisioningView: View {
                     SecureField("Wi-Fi SSID（1–32 UTF-8 字节）", text: $ssid)
                     SecureField("Wi-Fi 密码（可留空）", text: $password)
                     SecureField("设备 Token（32–128 ASCII 字符）", text: $token)
-                    Text("这些字段仅保留在当前面板内存中。写入会将 SSID、密码和 Token 加密传给当前连接的 S3 并保存到其 NVS；会替换原配置并关闭准入窗口。")
+                    Text("这些字段仅保留在当前面板内存中。写入会将 SSID、密码和 Token 加密传给当前连接的 S3 并保存到其 NVS，随后尝试连接该 Wi-Fi；会替换原配置并关闭准入窗口。")
                         .font(.caption).foregroundStyle(.secondary)
                     Button("写入配置…") { confirmProvision = true }
                         .disabled(!client.authenticated || client.busy)
@@ -239,6 +241,7 @@ struct USBProvisioningView: View {
                     Text(client.notice)
                     if let reply = client.lastReply {
                         LabeledContent("已配置", value: reply.configured ? "是" : "否")
+                        LabeledContent("Wi-Fi（上次查询）", value: reply.wifi_connected == true ? "已取得 IP" : "未确认连接")
                         LabeledContent("ARM（上次查询）", value: reply.armed ? "是" : "否")
                         LabeledContent("HID（上次查询）", value: reply.hid_connected ? "就绪" : "未就绪")
                         LabeledContent("准入窗口", value: reply.pairing_open ? "打开" : "关闭")
@@ -257,7 +260,7 @@ struct USBProvisioningView: View {
                         password = ""
                     }
                 }
-            } message: { Text("SSID、密码和 Token 将写入该板的 NVS。App 不保存副本，不启用 Wi-Fi。") }
+            } message: { Text("SSID、密码和 Token 将写入该板的 NVS。板端会尝试连接该 Wi-Fi，App 不保存副本。") }
             .confirmationDialog("允许手动 HID 测试 60 秒？", isPresented: $confirmArm, titleVisibility: .visible) {
                 Button("ARM 60 秒") { Task { await client.command(op: "arm", token: token) } }
             } message: { Text("请先切到无敏感内容的测试页面。ARM 本身不移动指针，随后需手动点击微移。") }
