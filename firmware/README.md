@@ -1,3 +1,5 @@
+> 新增独立 [ESP32-S3 USB NCM+HID实验目标](../docs/USB_S3_PROTOTYPE.zh-CN.md)：加密手机配网与有界USB键鼠。尚需编译/实机验证；不替换下方BLE镜像，C3不支持此USB目标。
+
 # ESP32 / C3 / S3 公共零外接引脚构建
 
 公共构建兼容性以[矩阵](../docs/BOARD_COMPATIBILITY.zh-CN.md)为准。C3 安装与软件控制请看 [零引脚安装说明](../docs/ESP32_C3_SETUP.zh-CN.md) 和 [网页安装器](../web-installer/README.md)。默认公共构建不需要 config.h 或外接按钮，凭据经 USB 写入，配对/授权/停止从 App 发起。以下 S3 按钮步骤是旧 config.h 模式的历史说明，不适用于任何公共零 GPIO 镜像。

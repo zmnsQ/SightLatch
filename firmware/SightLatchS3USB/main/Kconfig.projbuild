@@ -1,0 +1,16 @@
+menu "SightLatch experimental USB"
+config SIGHTLATCH_PAIR_GPIO
+    int "Physical pairing / stop button GPIO (board must be verified)"
+    range 0 48
+    default 0
+    help
+        Default is BOOT on common S3 devkits, pressed only AFTER boot.
+        Confirm the board schematic. Do not use USB GPIO19/20 or flash pins.
+        Any press stops HID immediately; hold three seconds to replace the session.
+config SIGHTLATCH_ALLOW_UART_PAIRING
+    bool "Enable temporary UART pairing code for unlabeled development boards"
+    default n
+    help
+        Development only. Needs a second trusted device attached to UART.
+        This is NOT iPhone-only setup. Do not capture UART output to logs.
+endmenu

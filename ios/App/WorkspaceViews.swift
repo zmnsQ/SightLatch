@@ -129,7 +129,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var destination: Destination?
     private enum Destination: String, Identifiable {
-        case device, ai, safety, workspace, onboarding
+        case device, ai, safety, workspace, onboarding, usb
         var id: String { rawValue }
     }
     var body: some View {
@@ -159,6 +159,8 @@ struct SettingsView: View {
                             settingsRow("高级与数据", symbol: "archivebox", destination: .workspace)
                             Divider().padding(.leading, 62)
                             settingsRow("使用指南", symbol: "book.closed", destination: .onboarding)
+                            Divider().padding(.leading, 62)
+                            settingsRow("S3 USB 实验", subtitle: "加密配网与手动 HID 测试，不支持 C3", symbol: "cable.connector", destination: .usb)
                         }.background(PilotPalette.group, in: RoundedRectangle(cornerRadius: 28))
                     }
                     Text("广播截图会交给你选择的 AI 服务。进入敏感页面前，先结束系统广播。")
@@ -174,6 +176,7 @@ struct SettingsView: View {
                 case .safety: ConfigurationDetailView(safety: true)
                 case .workspace: WorkspaceHubView()
                 case .onboarding: OnboardingView()
+                case .usb: USBProvisioningView()
                 }
             }
         }
