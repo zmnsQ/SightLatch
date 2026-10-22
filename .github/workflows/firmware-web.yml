@@ -1,9 +1,9 @@
 name: Build ESP32 family firmware and USB installer
 on:
   push:
-    paths: ['firmware/**', 'web-installer/**', 'scripts/*firmware*', '.github/workflows/firmware-web.yml']
+    paths: ['firmware/**', 'web-installer/**', 'scripts/*firmware*', 'scripts/prepare_ble_library.py', 'tests/check_hid_report_registration.py', 'tests/fixtures/arduino-esp32-3.3.5/**', '.github/workflows/firmware-web.yml']
   pull_request:
-    paths: ['firmware/**', 'web-installer/**', 'scripts/*firmware*', '.github/workflows/firmware-web.yml']
+    paths: ['firmware/**', 'web-installer/**', 'scripts/*firmware*', 'scripts/prepare_ble_library.py', 'tests/check_hid_report_registration.py', 'tests/fixtures/arduino-esp32-3.3.5/**', '.github/workflows/firmware-web.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -28,6 +28,7 @@ jobs:
           python3 scripts/verify_firmware.py
           python3 tests/check_c3_firmware.py
           python3 tests/check_arm_diagnostics.py
+          python3 tests/check_hid_report_registration.py
           g++ -std=c++17 -Wall -Wextra -Werror tests/authentication_policy_test.cpp -o /tmp/auth-policy
           /tmp/auth-policy
       - uses: actions/setup-node@v4

@@ -1,19 +1,20 @@
 import {ESPLoader,Transport} from 'esptool-js';
 import SparkMD5 from 'spark-md5';
-import {families,validateDevice,validateImage,validateManifest} from './validation.js';
+import {families,validateDevice,validateImage,validateManifest,validateUpdateManifest,validateApplication} from './validation.js';
 import {deviceDiagnostics} from './validation.js';
 import './style.css';
 const $=id=>document.getElementById(id);
 let loader,transport,manifest,busy=false;
 const supported=isSecureContext&&("serial" in navigator);
 const log=s=>{$('log').textContent=($('log').textContent+'\n'+s).slice(-14000);};
-function state(){for(const id of ['connect','configure','readStatus','serialMode','chipFamily'])$(id).disabled=busy||!supported; $('disconnect').disabled=busy||!transport;$('flash').disabled=busy||!supported||!loader||!manifest||!$('consent').checked;}
+function state(){for(const id of ['connect','configure','readStatus','serialMode','chipFamily','updateConsent'])$(id).disabled=busy||!supported; $('disconnect').disabled=busy||!transport;$('flash').disabled=busy||!supported||!loader||!manifest||!$('consent').checked;let updateAvailable=false;try{validateUpdateManifest(manifest,$('serialMode').value,$('chipFamily').value);updateAvailable=true;}catch{}$('upgrade').disabled=busy||!supported||!updateAvailable||!$('updateConsent').checked;}
 async function disconnect(){loader=null;if(transport){try{await transport.disconnect();}finally{transport=null;}}state();}
 function message(e){return e?.name==='NotFoundError'?'已取消选择设备。':String(e?.message||e);}
 async function run(task,target='status'){if(busy)return;busy=true;state();try{await task();}catch(e){$(target).textContent=message(e);log(message(e));try{await disconnect();}catch{} }finally{busy=false;state();}}
 $('consent').onchange=state;
-$('chipFamily').onchange=()=>run(async()=>{await disconnect();$('consent').checked=false;const classic=$('chipFamily').value==='ESP32';$('serialMode').querySelector('[value=usb]').disabled=classic;if(classic)$('serialMode').value='uart';$('device').textContent='芯片选择已更改，请重新识别。';});
-$('serialMode').onchange=()=>{$('consent').checked=false;state();};
+$('updateConsent').onchange=state;
+$('chipFamily').onchange=()=>run(async()=>{await disconnect();$('consent').checked=false;$('updateConsent').checked=false;const classic=$('chipFamily').value==='ESP32';$('serialMode').querySelector('[value=usb]').disabled=classic;if(classic)$('serialMode').value='uart';$('device').textContent='芯片选择已更改，请重新识别。';});
+$('serialMode').onchange=()=>{$('consent').checked=false;$('updateConsent').checked=false;state();};
 $('disconnect').onclick=()=>run(async()=>{await disconnect();$('device').textContent='已断开。若停在下载模式，请按 RESET。';});
 $('connect').onclick=()=>run(async()=>{
   await disconnect();const port=await navigator.serial.requestPort();transport=new Transport(port,false);
@@ -38,6 +39,35 @@ $('flash').onclick=()=>run(async()=>{
   await loader.after('hard_reset');await disconnect();$('consent').checked=false;
   $('status').textContent='写入及MD5校验完成。请复位或重新插USB，然后设置Wi-Fi。BLE/iPhone功能仍待真机验证。';
 });
+const sha256=async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),x=>x.toString(16).padStart(2,'0')).join('');
+$('upgrade').onclick=()=>run(async()=>{
+  if(!$('updateConsent').checked)throw Error('请先确认设备已安装兼容的0.2.2固件。');
+  const update=validateUpdateManifest(manifest,$('serialMode').value,$('chipFamily').value),app=update.application;
+  $('upgradeStatus').textContent='正在校验应用镜像；尚未写入设备…';
+  const response=await fetch(new URL(app.path,document.baseURI),{cache:'no-store'});
+  if(!response.ok)throw Error('应用镜像下载失败，未写入。');
+  const bytes=new Uint8Array(await response.arrayBuffer());validateApplication(bytes,update.chipFamily,app.size);
+  if(await sha256(bytes)!==app.sha256)throw Error('应用SHA-256不匹配，未写入。');
+  if(!loader){
+    const port=await navigator.serial.requestPort();transport=new Transport(port,false);
+    loader=new ESPLoader({transport,baudrate:115200,romBaudrate:115200,terminal:{clean(){},write:log,writeLine:log},debugLogging:false});
+    await loader.main();
+  }
+  validateDevice(loader.chip.CHIP_NAME,await loader.getFlashSize(),update.chipFamily);
+  $('upgradeStatus').textContent='正在只读核对bootloader和分区表；不读取Wi-Fi或令牌配置…';
+  for(const range of [update.compatibility.bootloader,update.compatibility.partitions]){
+    const current=await loader.readFlash(range.offset,range.size);
+    if(current.length!==range.size||await sha256(current)!==range.sha256)throw Error('设备布局与0.2.2不匹配，已停止，未擦写。请查看下方全新安装入口；不会自动清空配置。');
+  }
+  if(!window.confirm(`保留配置升级到${manifest.version}（${update.chipFamily} / ${update.variant}）？仅写入应用区，保留Wi-Fi、控制令牌和配对数据。下载模式无法检测旧固件版本；须确认此前安装的是0.2.2。`)){
+    await loader.after('hard_reset');await disconnect();$('upgradeStatus').textContent='已取消升级，未擦写。';return;
+  }
+  let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));
+  $('upgradeStatus').textContent='兼容检查通过，正在升级应用。请勿拔线…';
+  await loader.writeFlash({fileArray:[{data:binary,address:0x10000}],flashSize:'4MB',flashMode:'dio',flashFreq:families[update.chipFamily].frequency,eraseAll:false,compress:true,calculateMD5Hash:data=>SparkMD5.hashBinary(data),reportProgress:(_,n,total)=>{$('progress').value=n/total*100;}});
+  await loader.after('hard_reset');await disconnect();$('updateConsent').checked=false;
+  $('upgradeStatus').textContent='应用写入及MD5校验完成，原配置区域未擦写。重新启动后读取状态，核实0.2.3；升级不等于真机功能已验收。';
+},'upgradeStatus');
 $('generate').onclick=()=>{$('token').value=Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');};
 $('show').onclick=()=>{$('token').type=$('token').type==='password'?'text':'password';};
 async function serialCommand(command){

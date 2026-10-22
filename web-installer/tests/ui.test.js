@@ -1,13 +1,13 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import {JSDOM} from 'jsdom';import {families,validateDevice,validateImage,validateManifest,deviceDiagnostics} from '../validation.js';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import {JSDOM} from 'jsdom';import {families,validateDevice,validateImage,validateManifest,deviceDiagnostics,validateUpdateManifest,validateApplication} from '../validation.js';
 const html=readFileSync(new URL('../index.html',import.meta.url),'utf8');const script=readFileSync(new URL('../src.js',import.meta.url),'utf8').replace(/^import .*;$/gm,'');
 async function setup({serial=true,chip='ESP32-C3',kb=4096,cancel=false,serialResponse=null}={}){
  const dom=new JSDOM(html,{url:'https://example.test/install/',runScripts:'outside-only'}),w=dom.window;let requests=0,writes=0;
- w.isSecureContext=true;w.families=families;w.validateDevice=validateDevice;w.validateImage=validateImage;w.validateManifest=validateManifest;w.deviceDiagnostics=deviceDiagnostics;
+ w.isSecureContext=true;w.families=families;w.validateDevice=validateDevice;w.validateImage=validateImage;w.validateManifest=validateManifest;w.deviceDiagnostics=deviceDiagnostics;w.validateUpdateManifest=validateUpdateManifest;w.validateApplication=validateApplication;
  w.TextEncoder=TextEncoder;w.TextDecoder=TextDecoder;
  if(serial)Object.defineProperty(w.navigator,'serial',{value:{requestPort:async()=>{requests++;if(cancel)throw new w.DOMException('cancel','NotFoundError');return serialResponse?{open:async()=>{},close:async()=>{},writable:{getWriter:()=>({write:async()=>{},releaseLock(){}})},readable:{getReader:()=>({read:async()=>({value:new TextEncoder().encode(JSON.stringify(serialResponse)+'\n'),done:false}),cancel:async()=>{},releaseLock(){}})}}:{};}}});
  w.ESPLoader=class{constructor(){this.chip={CHIP_NAME:chip}}async main(){}async getFlashSize(){return kb}async writeFlash(){writes++}};
  w.Transport=class{async disconnect(){}};w.SparkMD5={};w.confirm=()=>false;
- w.fetch=async()=>({ok:true,json:async()=>({version:'0.2.2',core:'3.3.5',builds:['usb','uart'].map(variant=>({variant,chipFamily:'ESP32-C3',parts:[{path:'firmware/test.bin',offset:0,sha256:'a'.repeat(64)}]}))})});
+ w.fetch=async()=>({ok:true,json:async()=>({version:'0.2.3',core:'3.3.5',builds:['usb','uart'].map(variant=>({variant,chipFamily:'ESP32-C3',parts:[{path:'firmware/test.bin',offset:0,sha256:'a'.repeat(64)}]}))})});
  w.eval(script);const settle=()=>new Promise(r=>setTimeout(r,10));await settle();return{w,settle,get requests(){return requests},get writes(){return writes},close:()=>w.close()};
 }
 test('no automatic serial access; cancellation remains safe',async()=>{const x=await setup({cancel:true});try{assert.equal(x.requests,0);x.w.document.getElementById('connect').click();await x.settle();assert.match(x.w.document.getElementById('status').textContent,/已取消/);assert.ok(x.w.document.getElementById('flash').disabled);assert.equal(x.writes,0)}finally{x.close()}});
