@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('ble_fix', ROOT / 'scripts/prepare_ble_library.py')
@@ -60,6 +61,24 @@ int main() {
 
 
 class HIDReportRegistration(unittest.TestCase):
+    def test_effective_cli_data_directory_for_defaults_and_explicit_configuration(self):
+        # Observed Arduino CLI 1.3.1 responses: config dump has no directories
+        # for defaults, while config get returns the effective data directory.
+        for expected in ('/home/runner/.arduino15', '/build/custom Arduino data'):
+            with self.subTest(path=expected), patch.object(
+                ble_fix.subprocess, 'check_output', return_value=ble_fix.json.dumps(expected).encode()
+            ) as query:
+                self.assertEqual(ble_fix.data_directory('arduino-cli'), Path(expected))
+                query.assert_called_once_with(['arduino-cli', 'config', 'get', 'directories.data', '--json'])
+
+    def test_missing_or_invalid_effective_data_directory_is_rejected(self):
+        for value in (None, '', ' ', {}, []):
+            with self.subTest(value=value), patch.object(
+                ble_fix.subprocess, 'check_output', return_value=ble_fix.json.dumps(value).encode()
+            ):
+                with self.assertRaisesRegex(SystemExit, 'directories.data'):
+                    ble_fix.data_directory('arduino-cli')
+
     def test_original_drops_mouse_and_patched_registers_both_reports(self):
         self.assertEqual(hashlib.sha256(FIXTURE.read_bytes()).hexdigest(), ble_fix.UPSTREAM_SHA256)
         with tempfile.TemporaryDirectory() as temp:

@@ -22,9 +22,18 @@ def apply_fix(library):
         raise SystemExit('BLE registration patch output did not match the reviewed source')
 
 
+def data_directory(cli):
+    # `config dump` omits defaults on a clean CLI installation. Ask the CLI for
+    # its effective value so defaults, config files, and environment overrides
+    # all follow the same resolution as the platform installer/compiler.
+    value = json.loads(subprocess.check_output([cli, 'config', 'get', 'directories.data', '--json']))
+    if not isinstance(value, str) or not value.strip():
+        raise SystemExit('Arduino CLI did not return a valid directories.data path')
+    return Path(value)
+
+
 def prepare(cli):
-    result = json.loads(subprocess.check_output([cli, 'config', 'dump', '--format', 'json']))
-    data = Path(result['config']['directories']['data'])
+    data = data_directory(cli)
     upstream = data / 'packages/esp32/hardware/esp32/3.3.5/libraries/BLE'
     if hashlib.sha256((upstream / 'src/BLEService.cpp').read_bytes()).hexdigest() != UPSTREAM_SHA256:
         raise SystemExit('Expected unmodified official Arduino-ESP32 3.3.5 BLE library')
