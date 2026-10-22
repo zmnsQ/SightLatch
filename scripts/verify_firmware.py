@@ -1,8 +1,10 @@
 from pathlib import Path
 import hashlib,json
+from firmware_provenance import source_id
 root=Path(__file__).resolve().parents[1]/'web-installer/public'
 m=json.loads((root/'firmware/manifest.json').read_text())
-assert m['version']=='0.2.1'
+assert m['version']=='0.2.2'
+assert m['path_normalization']['flags']==['-ffile-prefix-map','-fmacro-prefix-map']
 repo=Path(__file__).resolve().parents[1]
 for path,digest in {**m['source_sha256'],**m.get('extended_source_sha256',{})}.items():
     target=(repo/path).resolve();assert repo in target.parents
@@ -12,7 +14,7 @@ assert len(m['builds'])==len(expected) and {(b['chipFamily'],b['variant']) for b
 for b in m['builds']:
     assert b['chipFamily'] in ('ESP32-C3','ESP32','ESP32-S3')
     assert b['flashSize']==4194304 and b['flashMode']=='dio'
-    if b['chipFamily']!='ESP32-C3':
+    if 'compiled_source_sha256' in b:
         assert set(b['compiled_source_sha256'])=={p.name for p in (repo/'firmware/IPhoneHIDBridge').glob('*') if p.is_file()}
         for name,digest in b['compiled_source_sha256'].items():
             data=(repo/'firmware/IPhoneHIDBridge'/name).read_bytes()
@@ -21,6 +23,9 @@ for b in m['builds']:
                 assert data.count(old)==1
                 data=data.replace(old,b'!defined(CONFIG_IDF_TARGET_ESP32) && '+old)
             assert hashlib.sha256(data).hexdigest()==digest
+        assert b['source_id']==source_id(b['compiled_source_sha256'])
+    else:
+        raise AssertionError('Missing compiled source fingerprint')
     chip,boot,freq={'ESP32-C3':(5,0,0x20),'ESP32':(0,0x1000,0x20),'ESP32-S3':(9,0,0x2f)}[b['chipFamily']]
     assert b['variant'] in (('uart',) if chip==0 else ('usb','uart'))
     assert b['flashFrequency']==('80m' if chip==9 else '40m')
@@ -29,6 +34,8 @@ for b in m['builds']:
     target=(root/p['path']).resolve();assert root.resolve() in target.parents
     data=target.read_bytes();assert len(data)==p['size']
     assert hashlib.sha256(data).hexdigest()==p['sha256']
+    assert b['source_id'].encode() in data
+    assert str(repo).encode() not in data and b'/Users/' not in data, 'local build path leaked into image'
     for offset in (boot,0x10000):
         assert data[offset]==0xe9 and int.from_bytes(data[offset+12:offset+14],'little')==chip
     assert data[boot+2:boot+4]==bytes([2,freq]),'unexpected per-family DIO / frequency / 4MB boot header'

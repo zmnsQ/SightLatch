@@ -17,6 +17,11 @@
 #include <atomic>
 #include <Preferences.h>
 #include "ProtocolPrimitives.h"
+#if __has_include("BuildProvenance.h")
+#include "BuildProvenance.h"
+#else
+#define SIGHTLATCH_BUILD_SOURCE_SHA256 "unrecorded"
+#endif
 using hidpilot::timeBefore;
 using hidpilot::asciiKey;
 #include <freertos/FreeRTOS.h>
@@ -31,6 +36,7 @@ using hidpilot::asciiKey;
 #endif
 
 static constexpr char ACCESSORY_SETUP_UUID[]="7D9B1E20-4F6A-4C88-A3D2-6E5F0190B7C1";
+static constexpr char FIRMWARE_VERSION[]="0.2.2";
 static constexpr uint32_t MAX_TTL = 5000, MIN_INTERVAL = 50;
 static constexpr size_t MAX_BODY = 1024, MAX_TEXT = 64;
 static WebServer http(80);
@@ -41,6 +47,12 @@ static std::atomic<bool> connected{false}, encrypted{false}, emergency{false};
 static std::atomic<uint32_t> pairUntil{0};
 static std::atomic<uint16_t> connId{0xffff};
 static std::atomic<uint32_t> authEvents{0}, authRejects{0}, disconnectEvents{0};
+static std::atomic<uint32_t> connectionAttempts{0}, connectionAdmissions{0}, connectionRejects{0};
+enum class ConnectionRejection { None, PairingWindowClosed, ExistingConnection };
+static std::atomic<ConnectionRejection> lastConnectionRejection{ConnectionRejection::None};
+static std::atomic<uint32_t> securityStartEvents{0};
+static std::atomic<int> lastSecurityStartCode{0};
+static std::atomic<bool> lastSecurityStartAccepted{false};
 static std::atomic<uint32_t> safetyStackFree{0};
 static std::atomic<int> lastDisconnectReason{-1}, lastEncryptionStatus{-1};
 static std::atomic<uint32_t> notifyEvents{0}, notifyErrors{0};
@@ -170,12 +182,23 @@ static void disarm(const char *reason) {
 class ServerCallbacks final : public BLEServerCallbacks {
 #if defined(CONFIG_BLUEDROID_ENABLED)
   void onConnect(BLEServer *server,esp_ble_gatts_cb_param_t *p) override {
-    if(!pairingOpen() || connected.exchange(true)) { server->disconnect(p->connect.conn_id); return; }
+    connectionAttempts.fetch_add(1);
+    if(!pairingOpen()) {
+      connectionRejects.fetch_add(1);lastConnectionRejection.store(ConnectionRejection::PairingWindowClosed);
+      server->disconnect(p->connect.conn_id);return;
+    }
+    if(connected.exchange(true)) {
+      connectionRejects.fetch_add(1);lastConnectionRejection.store(ConnectionRejection::ExistingConnection);
+      server->disconnect(p->connect.conn_id);return;
+    }
+    connectionAdmissions.fetch_add(1);
     connId.store(p->connect.conn_id); encrypted.store(false);
     memcpy(targetAddress,p->connect.remote_bda,sizeof(targetAddress));
     server->getAdvertising()->stop();
     // Encryption requested with SC; NoInputNoOutput is NOT MITM-resistant.
-    esp_ble_set_encryption(p->connect.remote_bda,ESP_BLE_SEC_ENCRYPT);
+    const esp_err_t securityResult=esp_ble_set_encryption(p->connect.remote_bda,ESP_BLE_SEC_ENCRYPT);
+    lastSecurityStartCode.store((int)securityResult);
+    lastSecurityStartAccepted.store(securityResult==ESP_OK);securityStartEvents.fetch_add(1);
   }
   void onDisconnect(BLEServer *,esp_ble_gatts_cb_param_t *p) override {
     if(p->disconnect.conn_id!=connId.load()) return;
@@ -187,10 +210,22 @@ class ServerCallbacks final : public BLEServerCallbacks {
   }
 #else
   void onConnect(BLEServer *server,ble_gap_conn_desc *p) override {
-    if(!pairingOpen()||connected.exchange(true)){server->disconnect(p->conn_handle);return;}
+    connectionAttempts.fetch_add(1);
+    if(!pairingOpen()) {
+      connectionRejects.fetch_add(1);lastConnectionRejection.store(ConnectionRejection::PairingWindowClosed);
+      server->disconnect(p->conn_handle);return;
+    }
+    if(connected.exchange(true)) {
+      connectionRejects.fetch_add(1);lastConnectionRejection.store(ConnectionRejection::ExistingConnection);
+      server->disconnect(p->conn_handle);return;
+    }
+    connectionAdmissions.fetch_add(1);
     connId.store(p->conn_handle);encrypted.store(false);
     server->getAdvertising()->stop();
-    BLESecurity::startSecurity(p->conn_handle);
+    int securityResult=0;
+    const bool securityAccepted=BLESecurity::startSecurity(p->conn_handle,&securityResult);
+    lastSecurityStartCode.store(securityResult);
+    lastSecurityStartAccepted.store(securityAccepted);securityStartEvents.fetch_add(1);
   }
   void onDisconnect(BLEServer *,ble_gap_conn_desc *p) override {
     if(p->conn_handle!=connId.load())return;
@@ -325,6 +360,22 @@ static bool authorized() {
 }
 // Read-only diagnostics: no credentials, text, addresses, or pairing changes.
 static void diagnosticFields(JsonDocument &d) {
+#if defined(CONFIG_BLUEDROID_ENABLED)
+  d["ble_stack"]="bluedroid";
+#else
+  d["ble_stack"]="nimble";
+#endif
+  d["firmware_source_sha256"]=SIGHTLATCH_BUILD_SOURCE_SHA256;
+  d["connection_attempts"]=connectionAttempts.load();d["connection_admissions"]=connectionAdmissions.load();
+  d["connection_rejects"]=connectionRejects.load();
+  switch(lastConnectionRejection.load()) {
+    case ConnectionRejection::None:d["last_connection_rejection"]="none";break;
+    case ConnectionRejection::PairingWindowClosed:d["last_connection_rejection"]="pairing_window_closed";break;
+    case ConnectionRejection::ExistingConnection:d["last_connection_rejection"]="existing_connection";break;
+  }
+  d["security_start_events"]=securityStartEvents.load();
+  d["last_security_start_code"]=lastSecurityStartCode.load();
+  d["last_security_start_accepted"]=lastSecurityStartAccepted.load();
   d["reset_reason"]=(int)esp_reset_reason();
   d["auth_events"]=authEvents.load();d["auth_rejects"]=authRejects.load();
   d["disconnect_events"]=disconnectEvents.load();
@@ -350,7 +401,7 @@ static void statusHandler() {
   d["last_error"]=lastError;d["pairing_open"]=pairingOpen();
   d["accessory_setup_service_uuid"]=ACCESSORY_SETUP_UUID;
   d["control_mode"]=SIGHTLATCH_SOFTWARE_CONTROL?"software":"physical";
-  d["firmware_version"]="0.2.1";diagnosticFields(d);
+  d["firmware_version"]=FIRMWARE_VERSION;diagnosticFields(d);
   d["transport_security"]="plaintext_http_trusted_lan_only";
   xSemaphoreGive(stateLock);respond(200,d);
 }
@@ -567,7 +618,7 @@ static void serialProvision() {
     String command=d["command"]|"";
     if(command=="status") {
       JsonDocument response;response["ok"]=true;response["configured"]=bridgeReady;
-      response["firmware_version"]="0.2.1";
+      response["firmware_version"]=FIRMWARE_VERSION;
       response["boot_id"]=bootId;response["uptime_ms"]=millis();
       response["ble_connected"]=connected.load();response["hid_connected"]=usable();
       diagnosticFields(response);response["ip"]=WiFi.localIP().toString();

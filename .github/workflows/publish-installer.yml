@@ -1,6 +1,10 @@
-name: Publish USB installer (manual)
+name: Publish USB installer
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - web-installer/public/firmware/manifest.json
 permissions:
   contents: read
   pages: write
@@ -22,7 +26,9 @@ jobs:
           cache: npm
           cache-dependency-path: web-installer/package-lock.json
       - name: Validate packaged images
-        run: python3 scripts/verify_firmware.py
+        run: |
+          python3 tests/check_connection_diagnostics.py
+          python3 scripts/verify_firmware.py
       - name: Build static installer
         working-directory: web-installer
         run: npm ci && npm test && npm run build

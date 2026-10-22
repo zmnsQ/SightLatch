@@ -27,6 +27,10 @@ Official references checked 2026-10-18:
 
 The selector also supports classic ESP32 (UART only) and ESP32-S3 (hardware USB Serial/JTAG or UART). Physical chip must match the selected family; changing family disconnects and clears erase consent. S3 requires DIO 80MHz-compatible Flash; OPI-only Flash boards are not supported. All layouts remain 4MB. See [the build-only compatibility matrix](../docs/BOARD_COMPATIBILITY.zh-CN.md). S2 has no BLE and is rejected. Build evidence is not hardware validation.
 
+## 0.2.2 连接诊断版
+
+新增连接尝试、接纳、拒绝原因、安全请求结果与编译源码指纹。见 [0.2.2 诊断说明](../docs/FIRMWARE_0.2.2_DIAGNOSTICS.zh-CN.md)。本版保留原有配对与控制门禁，用于定位真实连接流程，不能宣称 HID 配对问题已解决。
+
 ## 0.2.1 诊断版
 
 见 [断链诊断与校准安全边界](../docs/FIRMWARE_0.2.1_DIAGNOSTICS.zh-CN.md)。本版未经过真实 iPhone / ESP32 BLE 回归，不能宣称现场掉线已解决。首次安装和更新都写完整 4MiB 镜像，会清除 Wi-Fi、控制令牌与蓝牙绑定，之后必须重新配置。

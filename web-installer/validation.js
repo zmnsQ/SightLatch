@@ -4,7 +4,7 @@ export function validateDevice(chip, flashKB, selected=chip) {
   if(!Number.isFinite(flashKB) || flashKB < 4096) throw Error('Flash 容量未知或小于 4MB，已阻止烧录。');
 }
 export function validateManifest(m,mode,family='ESP32-C3') {
-  if(m.version!=='0.2.1'||!Array.isArray(m.builds))throw Error('无效 manifest');
+  if(m.version!=='0.2.2'||!Array.isArray(m.builds))throw Error('无效 manifest');
   const spec=families[family];
   const matches=m.builds.filter(b=>b.variant===mode&&b.chipFamily===family),b=matches[0];
   if(!spec||!spec.modes.includes(mode)||matches.length!==1||!Array.isArray(b.parts)||b.parts.length!==1||b.parts[0].offset!==0||!/^[a-f0-9]{64}$/.test(b.parts[0].sha256))throw Error('镜像元数据不匹配');
@@ -23,8 +23,11 @@ export function validateImage(bytes,family='ESP32-C3') {
 export function deviceDiagnostics(status) {
   const out={};
   if(typeof status.boot_id==='string'&&/^[a-f0-9]{32}$/i.test(status.boot_id))out.boot_id=status.boot_id;
-  for(const key of ['uptime_ms','reset_reason','auth_events','auth_rejects','disconnect_events','last_disconnect_reason','last_encryption_status','notify_events','notify_errors','last_notify_code','free_heap_bytes','min_free_heap_bytes','safety_stack_free_bytes'])
+  if(['nimble','bluedroid'].includes(status.ble_stack))out.ble_stack=status.ble_stack;
+  if(typeof status.firmware_source_sha256==='string'&&/^[a-f0-9]{64}$/.test(status.firmware_source_sha256))out.firmware_source_sha256=status.firmware_source_sha256;
+  if(['none','pairing_window_closed','existing_connection'].includes(status.last_connection_rejection))out.last_connection_rejection=status.last_connection_rejection;
+  for(const key of ['uptime_ms','reset_reason','connection_attempts','connection_admissions','connection_rejects','security_start_events','last_security_start_code','auth_events','auth_rejects','disconnect_events','last_disconnect_reason','last_encryption_status','notify_events','notify_errors','last_notify_code','free_heap_bytes','min_free_heap_bytes','safety_stack_free_bytes'])
     if(typeof status[key]==='number'&&Number.isFinite(status[key]))out[key]=status[key];
-  for(const key of ['ble_connected','hid_connected'])if(typeof status[key]==='boolean')out[key]=status[key];
+  for(const key of ['ble_connected','hid_connected','last_security_start_accepted'])if(typeof status[key]==='boolean')out[key]=status[key];
   return JSON.stringify(out,null,2);
 }
