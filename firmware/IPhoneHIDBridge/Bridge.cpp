@@ -36,7 +36,10 @@ using hidpilot::asciiKey;
 #endif
 
 static constexpr char ACCESSORY_SETUP_UUID[]="7D9B1E20-4F6A-4C88-A3D2-6E5F0190B7C1";
-static constexpr char FIRMWARE_VERSION[]="0.2.2";
+#if defined(CONFIG_NIMBLE_ENABLED) && !defined(SIGHTLATCH_NIMBLE_REPORT_REGISTRATION_FIX)
+#error "Build with scripts/build_firmware.sh: Arduino 3.3.5 requires the HID Report registration fix."
+#endif
+static constexpr char FIRMWARE_VERSION[]="0.2.3";
 static constexpr uint32_t MAX_TTL = 5000, MIN_INTERVAL = 50;
 static constexpr size_t MAX_BODY = 1024, MAX_TEXT = 64;
 static WebServer http(80);

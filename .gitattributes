@@ -1,0 +1,2 @@
+# Unified patches require a leading space even on empty context lines.
+firmware/IPhoneHIDBridge/*.patch whitespace=-blank-at-eol

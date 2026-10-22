@@ -2,6 +2,10 @@
 
 公共构建兼容性以[矩阵](../docs/BOARD_COMPATIBILITY.zh-CN.md)为准。C3 安装与软件控制请看 [零引脚安装说明](../docs/ESP32_C3_SETUP.zh-CN.md) 和 [网页安装器](../web-installer/README.md)。默认公共构建不需要 config.h 或外接按钮，凭据经 USB 写入，配对/授权/停止从 App 发起。以下 S3 按钮步骤是旧 config.h 模式的历史说明，不适用于任何公共零 GPIO 镜像。
 
+0.2.3 修复 C3 在首次 ARM（包括开始校准）发送鼠标释放报告时的 panic。0.2.2 真机异常与同版 ELF 精确对应 `sendMouse → BLECharacteristic::notify → BLEService::getServer`。Arduino-ESP32 3.3.5 的 NimBLE 服务注册会忽略同 UUID 的第二个对象，而标准 HID 键盘和鼠标需要两个 UUID 为 0x2A4D、Report ID 分别为 1/2 的特征。
+
+构建脚本会复制官方 3.3.5 BLE 库到忽略的构建目录，核对 `BLEService.cpp` SHA-256 后应用 [单点兼容补丁](IPhoneHIDBridge/BLEService-3.3.5.patch)，仅在重复添加同一对象时跳过注册；通过 `--library` 显式选用该副本，不修改全局工具链。源码指纹和发布 manifest 记录补丁及上游/修补后的 hash。C3 必须通过 `scripts/build_firmware.sh` 构建；直接使用未修补的 Arduino 3.3.5 IDE 库会被编译保护拦截。`python3 tests/check_hid_report_registration.py` 直接编译上游注册函数，复现旧版丢失鼠标特征，并验证修补后两个特征均注册。报告格式、ASCII 限制、配对、加密、ARM 和停止规则不变；修复后的真实校准仍需刷写后验证。
+
 # ESP32-S3 本地 HTTP → BLE 键鼠原型
 
 **2026-10-15增量：主机C++测试已覆盖原固件提取出的ASCII映射与计时回绕；没有编译完整ESP32固件。详见根目录 `CURRENT_VALIDATION_20261015.zh-CN.md`。**

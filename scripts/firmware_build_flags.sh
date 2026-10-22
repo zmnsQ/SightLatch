@@ -15,5 +15,5 @@ firmware_map_prefix '{runtime.platform.path}' /arduino/platform
 firmware_map_prefix '{build.path}' /arduino/build
 FIRMWARE_BUILD_PROPERTIES=(
   --build-property "compiler.c.extra_flags=$FIRMWARE_PREFIX_FLAGS"
-  --build-property "compiler.cpp.extra_flags=$FIRMWARE_PREFIX_FLAGS"
+  --build-property "compiler.cpp.extra_flags=$FIRMWARE_PREFIX_FLAGS -DSIGHTLATCH_NIMBLE_REPORT_REGISTRATION_FIX=1"
 )

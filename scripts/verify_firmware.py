@@ -1,9 +1,13 @@
 from pathlib import Path
 import hashlib,json
 from firmware_provenance import source_id
+from prepare_ble_library import UPSTREAM_SHA256, PATCHED_SHA256
 root=Path(__file__).resolve().parents[1]/'web-installer/public'
 m=json.loads((root/'firmware/manifest.json').read_text())
-assert m['version']=='0.2.2'
+assert m['version']=='0.2.3'
+assert m['ble_compatibility']['upstream_sha256']==UPSTREAM_SHA256
+assert m['ble_compatibility']['patched_sha256']==PATCHED_SHA256
+assert m['ble_compatibility']['patch'] in m['source_sha256']
 assert m['path_normalization']['flags']==['-ffile-prefix-map','-fmacro-prefix-map']
 repo=Path(__file__).resolve().parents[1]
 for path,digest in {**m['source_sha256'],**m.get('extended_source_sha256',{})}.items():
@@ -40,4 +44,19 @@ for b in m['builds']:
         assert data[offset]==0xe9 and int.from_bytes(data[offset+12:offset+14],'little')==chip
     assert data[boot+2:boot+4]==bytes([2,freq]),'unexpected per-family DIO / frequency / 4MB boot header'
     assert data[0x8000:0x8002]==b'\xaa\x50'
+    update=b['update'];app=update['application'];compatibility=update['compatibility']
+    assert compatibility['fromVersion']=='0.2.2'
+    assert app['offset']==0x10000 and 0<app['size']<=0x300000
+    app_path=(root/app['path']).resolve();assert root.resolve() in app_path.parents
+    app_data=app_path.read_bytes()
+    assert len(app_data)==app['size'] and hashlib.sha256(app_data).hexdigest()==app['sha256']
+    assert app_data==data[0x10000:0x10000+app['size']]
+    previous=(target.parent/target.name.replace(m['version'],compatibility['fromVersion'])).read_bytes()
+    assert data[:0x10000]==previous[:0x10000]
+    for name in ('bootloader','partitions'):
+        region=compatibility[name];start=region['offset'];end=start+region['size']
+        if name=='bootloader':assert start==boot and start<end<=0x8000
+        else:assert start==0x8000 and start<end<=0x9000
+        assert data[start:end]==previous[start:end]
+        assert hashlib.sha256(data[start:end]).hexdigest()==region['sha256']
     print(b['chipFamily'],b['variant'],len(data),p['sha256'])

@@ -27,6 +27,10 @@ Official references checked 2026-10-18:
 
 The selector also supports classic ESP32 (UART only) and ESP32-S3 (hardware USB Serial/JTAG or UART). Physical chip must match the selected family; changing family disconnects and clears erase consent. S3 requires DIO 80MHz-compatible Flash; OPI-only Flash boards are not supported. All layouts remain 4MB. See [the build-only compatibility matrix](../docs/BOARD_COMPATIBILITY.zh-CN.md). S2 has no BLE and is rejected. Build evidence is not hardware validation.
 
+## 0.2.3 C3 HID 报告注册修复
+
+修复首次开始校准/ARM 时鼠标报告触发的固件 panic：固定 Arduino 3.3.5 NimBLE 对同 UUID 的两个 HID Report 对象注册不完整的问题。保留键盘/鼠标报告格式、配对及控制限制。构建与原始异常的定位说明见 [固件说明](../firmware/README.md)。主机回归与编译验证不代替刷写后的真机校准验收。旧版本镜像保留原链接供比较；当前 manifest 仅提供 0.2.3。
+
 ## 0.2.2 连接诊断版
 
 新增连接尝试、接纳、拒绝原因、安全请求结果与编译源码指纹。见 [0.2.2 诊断说明](../docs/FIRMWARE_0.2.2_DIAGNOSTICS.zh-CN.md)。本版保留原有配对与控制门禁，用于定位真实连接流程，不能宣称 HID 配对问题已解决。

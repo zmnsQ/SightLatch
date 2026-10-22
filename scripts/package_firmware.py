@@ -2,10 +2,12 @@
 from pathlib import Path
 import hashlib,json
 from firmware_provenance import source_hashes, source_id
+from prepare_ble_library import UPSTREAM_SHA256, PATCHED_SHA256
 ROOT=Path(__file__).resolve().parents[1]
 out=ROOT/'web-installer/public/firmware';out.mkdir(parents=True,exist_ok=True)
-manifest={'name':'SightLatch ESP32-C3','version':'0.2.2','arduinoCli':'1.3.1','core':'3.3.5','arduinoJson':'7.0.4','builds':[]}
-manifest['source_sha256']={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted([*(ROOT/'firmware/IPhoneHIDBridge').glob('*'),ROOT/'scripts/build_firmware.sh',ROOT/'scripts/firmware_build_flags.sh',ROOT/'scripts/firmware_provenance.py',ROOT/'scripts/package_firmware.py']) if p.is_file()}
+manifest={'name':'SightLatch ESP32-C3','version':'0.2.3','arduinoCli':'1.3.1','core':'3.3.5','arduinoJson':'7.0.4','builds':[]}
+manifest['source_sha256']={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted([*(ROOT/'firmware/IPhoneHIDBridge').glob('*'),ROOT/'scripts/build_firmware.sh',ROOT/'scripts/firmware_build_flags.sh',ROOT/'scripts/firmware_provenance.py',ROOT/'scripts/package_firmware.py',ROOT/'scripts/prepare_ble_library.py']) if p.is_file()}
+manifest['ble_compatibility']={'patch':'firmware/IPhoneHIDBridge/BLEService-3.3.5.patch','upstream':'https://github.com/espressif/arduino-esp32/blob/3.3.5/libraries/BLE/src/BLEService.cpp','upstream_sha256':UPSTREAM_SHA256,'patched_sha256':PATCHED_SHA256}
 manifest['path_normalization']={'flags':['-ffile-prefix-map','-fmacro-prefix-map'],'checkout':'/sightlatch','arduinoData':'/arduino/data','arduinoUser':'/arduino/user','platform':'/arduino/platform','compileOutput':'/arduino/build'}
 for mode in ('usb','uart'):
     folder=ROOT/'firmware/build'/mode
@@ -17,7 +19,7 @@ for mode in ('usb','uart'):
         assert int.from_bytes(binary[offset+12:offset+14],'little')==5,'not ESP32-C3'
     assert binary[2:4]==bytes([2,0x20]),'expected DIO / 40MHz / 4MB boot header'
     assert binary[0x8000:0x8002]==b'\xaa\x50','partition table missing'
-    name=f'sightlatch-0.2.2-c3-{mode}.bin';(out/name).write_bytes(binary)
+    name=f'sightlatch-0.2.3-c3-{mode}.bin';(out/name).write_bytes(binary)
     hashes=source_hashes(ROOT/'firmware/build/c3-source/IPhoneHIDBridge')
     fingerprint=source_id(hashes)
     assert fingerprint.encode() in binary, 'compiled image is missing its source fingerprint'

@@ -1,15 +1,16 @@
 {
   "name": "SightLatch ESP32 / C3 / S3",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "arduinoCli": "1.3.1",
   "core": "3.3.5",
   "arduinoJson": "7.0.4",
   "builds": [
     {
       "fqbn": "esp32:esp32:esp32c3:CDCOnBoot=cdc,FlashMode=dio,FlashFreq=40,FlashSize=4M,PartitionScheme=huge_app",
-      "source_id": "30f3ae374aa57a997747abf49523e80c29bd69a95b846b946c5fa9a18aeedfdf",
+      "source_id": "a7a59029d15d2ec3407d9e678840dd3ebe91129169d3448a84fc822733ffd16a",
       "compiled_source_sha256": {
-        "Bridge.cpp": "2a0f3425e6874ba14179403d264be2c27be882286337b9703e7ac33f5f9fbc2a",
+        "BLEService-3.3.5.patch": "ae514c9559aa88765e50a261a6376c3d528f31df430a57e06c3fcaacface61d2",
+        "Bridge.cpp": "abe41b02f57b30bbe5a79705e90f0dec1650ed373c3520d0dd39180d712e5674",
         "IPhoneHIDBridge.ino": "d6d393a756acda7279bfeba764a8da457b4e3a81c2753e1b0048723225663f0d",
         "ProtocolPrimitives.h": "feb2f7227ecfeb12790fd66ae17926f763a523fb176db60dfd6c8799dc3225ff",
         "config.default.h": "4dddc2b27ee8f8294e012153ff9bf8c97e2e1803c16fb044620070ae476a1f60",
@@ -22,18 +23,40 @@
       "flashFrequency": "40m",
       "parts": [
         {
-          "path": "firmware/sightlatch-0.2.2-c3-usb.bin",
+          "path": "firmware/sightlatch-0.2.3-c3-usb.bin",
           "offset": 0,
           "size": 4194304,
-          "sha256": "eb1ea07233f9e09b981427f1fdbeb6508a05f5883d5d8e347c1e2ad0bfbdd9d0"
+          "sha256": "8f7144d871ab29938173279a98ed11c85decb4544e865de2d82f08743e7613e0"
         }
-      ]
+      ],
+      "update": {
+        "application": {
+          "path": "firmware/sightlatch-0.2.3-c3-usb-app.bin",
+          "offset": 65536,
+          "size": 1300192,
+          "sha256": "e3b732457d32241d1080d2b528ef3fb542a0146b4228d73b5940476d9c2862ac"
+        },
+        "compatibility": {
+          "fromVersion": "0.2.2",
+          "bootloader": {
+            "offset": 0,
+            "size": 18816,
+            "sha256": "48bdd96cd859946da848fa90a1551ed9439987ed3dc02a34336cff43481fd7e2"
+          },
+          "partitions": {
+            "offset": 32768,
+            "size": 3072,
+            "sha256": "aaae2888c5a6a348004b5b436f47abb25ae32e72d9003902955a998eda723edd"
+          }
+        }
+      }
     },
     {
       "fqbn": "esp32:esp32:esp32c3:CDCOnBoot=default,FlashMode=dio,FlashFreq=40,FlashSize=4M,PartitionScheme=huge_app",
-      "source_id": "30f3ae374aa57a997747abf49523e80c29bd69a95b846b946c5fa9a18aeedfdf",
+      "source_id": "a7a59029d15d2ec3407d9e678840dd3ebe91129169d3448a84fc822733ffd16a",
       "compiled_source_sha256": {
-        "Bridge.cpp": "2a0f3425e6874ba14179403d264be2c27be882286337b9703e7ac33f5f9fbc2a",
+        "BLEService-3.3.5.patch": "ae514c9559aa88765e50a261a6376c3d528f31df430a57e06c3fcaacface61d2",
+        "Bridge.cpp": "abe41b02f57b30bbe5a79705e90f0dec1650ed373c3520d0dd39180d712e5674",
         "IPhoneHIDBridge.ino": "d6d393a756acda7279bfeba764a8da457b4e3a81c2753e1b0048723225663f0d",
         "ProtocolPrimitives.h": "feb2f7227ecfeb12790fd66ae17926f763a523fb176db60dfd6c8799dc3225ff",
         "config.default.h": "4dddc2b27ee8f8294e012153ff9bf8c97e2e1803c16fb044620070ae476a1f60",
@@ -46,18 +69,40 @@
       "flashFrequency": "40m",
       "parts": [
         {
-          "path": "firmware/sightlatch-0.2.2-c3-uart.bin",
+          "path": "firmware/sightlatch-0.2.3-c3-uart.bin",
           "offset": 0,
           "size": 4194304,
-          "sha256": "f9c786872dff8f3f00a686fdca8721664e810b18589f44a1881ceb645bf14a21"
+          "sha256": "4bb1a2a6a8b3a394eeefadb815677925cdddfd8f694ad398c77ed8f32d139a22"
         }
-      ]
+      ],
+      "update": {
+        "application": {
+          "path": "firmware/sightlatch-0.2.3-c3-uart-app.bin",
+          "offset": 65536,
+          "size": 1284048,
+          "sha256": "b4cb26d406894d6bd16aa1f71cbb707d4791d5e4bb4e65e68d7bdc6bedb4025c"
+        },
+        "compatibility": {
+          "fromVersion": "0.2.2",
+          "bootloader": {
+            "offset": 0,
+            "size": 18816,
+            "sha256": "48bdd96cd859946da848fa90a1551ed9439987ed3dc02a34336cff43481fd7e2"
+          },
+          "partitions": {
+            "offset": 32768,
+            "size": 3072,
+            "sha256": "aaae2888c5a6a348004b5b436f47abb25ae32e72d9003902955a998eda723edd"
+          }
+        }
+      }
     },
     {
-      "source_id": "7cdb59c5ff582c76a7e6ed33f7c1b774c27f3b1445df483840ca77535ea3a640",
+      "source_id": "a61feff17088f34680ddce7c0c977437c826cd7099131d0ff468267d154d53a9",
       "fqbn": "esp32:esp32:esp32:FlashMode=dio,FlashFreq=40,FlashSize=4M,PartitionScheme=huge_app",
       "compiled_source_sha256": {
-        "Bridge.cpp": "e115b916ea21a5bb99b1491b950d5b21777698dc67c296c1b09a9385a64510e9",
+        "BLEService-3.3.5.patch": "ae514c9559aa88765e50a261a6376c3d528f31df430a57e06c3fcaacface61d2",
+        "Bridge.cpp": "1c21f5ac06670766829ef4bc35961bdc2dd8cbb9f04a6ad04c8fbeab7fc89c35",
         "IPhoneHIDBridge.ino": "d6d393a756acda7279bfeba764a8da457b4e3a81c2753e1b0048723225663f0d",
         "ProtocolPrimitives.h": "feb2f7227ecfeb12790fd66ae17926f763a523fb176db60dfd6c8799dc3225ff",
         "config.default.h": "4dddc2b27ee8f8294e012153ff9bf8c97e2e1803c16fb044620070ae476a1f60",
@@ -71,18 +116,40 @@
       "flashFrequency": "40m",
       "parts": [
         {
-          "path": "firmware/sightlatch-0.2.2-esp32-uart.bin",
+          "path": "firmware/sightlatch-0.2.3-esp32-uart.bin",
           "offset": 0,
           "size": 4194304,
-          "sha256": "041cc419788998a0facd396e42c5b8b3ceb9b973831d275892f224190f808256"
+          "sha256": "a8bddacca59d8a4b1c5352e81357b505c4bcffaa0380469fb58ffebf292398d8"
         }
-      ]
+      ],
+      "update": {
+        "application": {
+          "path": "firmware/sightlatch-0.2.3-esp32-uart-app.bin",
+          "offset": 65536,
+          "size": 1730544,
+          "sha256": "e694337ec9306ba79cbe2a46ff552b1aa8ee01b19034104a5028d6aebe72a021"
+        },
+        "compatibility": {
+          "fromVersion": "0.2.2",
+          "bootloader": {
+            "offset": 4096,
+            "size": 23712,
+            "sha256": "fa4e2587e7d7c919892123272c0b8fbf9e1b12e8bb26d308039dc9b1cba83f7a"
+          },
+          "partitions": {
+            "offset": 32768,
+            "size": 3072,
+            "sha256": "aaae2888c5a6a348004b5b436f47abb25ae32e72d9003902955a998eda723edd"
+          }
+        }
+      }
     },
     {
-      "source_id": "30f3ae374aa57a997747abf49523e80c29bd69a95b846b946c5fa9a18aeedfdf",
+      "source_id": "a7a59029d15d2ec3407d9e678840dd3ebe91129169d3448a84fc822733ffd16a",
       "fqbn": "esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=dio,FlashSize=4M,PartitionScheme=huge_app,PSRAM=disabled",
       "compiled_source_sha256": {
-        "Bridge.cpp": "2a0f3425e6874ba14179403d264be2c27be882286337b9703e7ac33f5f9fbc2a",
+        "BLEService-3.3.5.patch": "ae514c9559aa88765e50a261a6376c3d528f31df430a57e06c3fcaacface61d2",
+        "Bridge.cpp": "abe41b02f57b30bbe5a79705e90f0dec1650ed373c3520d0dd39180d712e5674",
         "IPhoneHIDBridge.ino": "d6d393a756acda7279bfeba764a8da457b4e3a81c2753e1b0048723225663f0d",
         "ProtocolPrimitives.h": "feb2f7227ecfeb12790fd66ae17926f763a523fb176db60dfd6c8799dc3225ff",
         "config.default.h": "4dddc2b27ee8f8294e012153ff9bf8c97e2e1803c16fb044620070ae476a1f60",
@@ -96,18 +163,40 @@
       "flashFrequency": "80m",
       "parts": [
         {
-          "path": "firmware/sightlatch-0.2.2-s3-usb.bin",
+          "path": "firmware/sightlatch-0.2.3-s3-usb.bin",
           "offset": 0,
           "size": 4194304,
-          "sha256": "a5fa42f52287288bf24f93a8b1fdc6c2462b0e4d5bfeb994a9aaf5c15b410ba3"
+          "sha256": "8cfcac73297f44466f64f86c152f375151617f157f0b47d28c6c8dbf2f7a1090"
         }
-      ]
+      ],
+      "update": {
+        "application": {
+          "path": "firmware/sightlatch-0.2.3-s3-usb-app.bin",
+          "offset": 65536,
+          "size": 1194832,
+          "sha256": "350c7179465e3d47dae3f9833264e9b76ece1e22f215f26d9b47956d6337cad9"
+        },
+        "compatibility": {
+          "fromVersion": "0.2.2",
+          "bootloader": {
+            "offset": 0,
+            "size": 18976,
+            "sha256": "37e7e73b837b5d0a9909bfe7b16cf95fe3a52e1b7cd92f4f0a7cef0d1d4072d9"
+          },
+          "partitions": {
+            "offset": 32768,
+            "size": 3072,
+            "sha256": "aaae2888c5a6a348004b5b436f47abb25ae32e72d9003902955a998eda723edd"
+          }
+        }
+      }
     },
     {
-      "source_id": "30f3ae374aa57a997747abf49523e80c29bd69a95b846b946c5fa9a18aeedfdf",
+      "source_id": "a7a59029d15d2ec3407d9e678840dd3ebe91129169d3448a84fc822733ffd16a",
       "fqbn": "esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=default,FlashMode=dio,FlashSize=4M,PartitionScheme=huge_app,PSRAM=disabled",
       "compiled_source_sha256": {
-        "Bridge.cpp": "2a0f3425e6874ba14179403d264be2c27be882286337b9703e7ac33f5f9fbc2a",
+        "BLEService-3.3.5.patch": "ae514c9559aa88765e50a261a6376c3d528f31df430a57e06c3fcaacface61d2",
+        "Bridge.cpp": "abe41b02f57b30bbe5a79705e90f0dec1650ed373c3520d0dd39180d712e5674",
         "IPhoneHIDBridge.ino": "d6d393a756acda7279bfeba764a8da457b4e3a81c2753e1b0048723225663f0d",
         "ProtocolPrimitives.h": "feb2f7227ecfeb12790fd66ae17926f763a523fb176db60dfd6c8799dc3225ff",
         "config.default.h": "4dddc2b27ee8f8294e012153ff9bf8c97e2e1803c16fb044620070ae476a1f60",
@@ -121,24 +210,54 @@
       "flashFrequency": "80m",
       "parts": [
         {
-          "path": "firmware/sightlatch-0.2.2-s3-uart.bin",
+          "path": "firmware/sightlatch-0.2.3-s3-uart.bin",
           "offset": 0,
           "size": 4194304,
-          "sha256": "3861e2bc45da26abcb3367e424c0a76bc29a72f7af81f887d0e2c5a7ec278079"
+          "sha256": "29b11a2b63c7c4db602027cfa08a05422dba5cdef7b5d5adb4a8bf59f65970ca"
         }
-      ]
+      ],
+      "update": {
+        "application": {
+          "path": "firmware/sightlatch-0.2.3-s3-uart-app.bin",
+          "offset": 65536,
+          "size": 1174976,
+          "sha256": "eb45640d36f98b852cea858e6a0aa9ef743a8ecab76d23286247eb6c2dd4f873"
+        },
+        "compatibility": {
+          "fromVersion": "0.2.2",
+          "bootloader": {
+            "offset": 0,
+            "size": 18976,
+            "sha256": "37e7e73b837b5d0a9909bfe7b16cf95fe3a52e1b7cd92f4f0a7cef0d1d4072d9"
+          },
+          "partitions": {
+            "offset": 32768,
+            "size": 3072,
+            "sha256": "aaae2888c5a6a348004b5b436f47abb25ae32e72d9003902955a998eda723edd"
+          }
+        }
+      }
     }
   ],
   "source_sha256": {
-    "firmware/IPhoneHIDBridge/Bridge.cpp": "2a0f3425e6874ba14179403d264be2c27be882286337b9703e7ac33f5f9fbc2a",
+    "firmware/IPhoneHIDBridge/BLEService-3.3.5.patch": "ae514c9559aa88765e50a261a6376c3d528f31df430a57e06c3fcaacface61d2",
+    "firmware/IPhoneHIDBridge/Bridge.cpp": "abe41b02f57b30bbe5a79705e90f0dec1650ed373c3520d0dd39180d712e5674",
     "firmware/IPhoneHIDBridge/IPhoneHIDBridge.ino": "d6d393a756acda7279bfeba764a8da457b4e3a81c2753e1b0048723225663f0d",
     "firmware/IPhoneHIDBridge/ProtocolPrimitives.h": "feb2f7227ecfeb12790fd66ae17926f763a523fb176db60dfd6c8799dc3225ff",
     "firmware/IPhoneHIDBridge/config.default.h": "4dddc2b27ee8f8294e012153ff9bf8c97e2e1803c16fb044620070ae476a1f60",
     "firmware/IPhoneHIDBridge/config.example.h": "d7bb1fdf97e4c8b2102161e962c14f3fdca94ae43b272ffec10da8e151885226",
-    "scripts/build_firmware.sh": "6a3b68a4742cc1d75e059a846f446f0bfb62dc8c4ef520e4eba0f5d4b687bb75",
-    "scripts/firmware_build_flags.sh": "ac3cb66d61092b19a65018b030f4e4e7337c14ec12fa950031e64d9d5af0ba3d",
+    "scripts/build_firmware.sh": "0655bc36ad9a0cf5b1db0946f334791209aac320dc03a3946f6d746a3fbc3f8e",
+    "scripts/firmware_build_flags.sh": "24d2fce648df45bf2997a2c0baa3717ab46d06643a477825eb358acb6e41a4fd",
     "scripts/firmware_provenance.py": "95f220e4e614e3adba46f58dbbb37b6db96267d33f2c96c24ee574f910cc69f9",
-    "scripts/package_firmware.py": "3761a73a719354d1c89858701fa08b95f7414c8ae4cf2f11a27f7ddc74fb3c92"
+    "scripts/package_firmware.py": "29cae3d357b5d4eff88a48b0d8fc840f7bb6e0ed47942de8935e8564ecf6c6db",
+    "scripts/prepare_ble_library.py": "6e07321e096549b5c47b58fc15ca735d14b79805e7db79baa4569186c7eecf7c",
+    "scripts/package_application_updates.py": "f51498d2ba631c14335c602fb94dfb0c72b132dd103e364a946e6734202526b6"
+  },
+  "ble_compatibility": {
+    "patch": "firmware/IPhoneHIDBridge/BLEService-3.3.5.patch",
+    "upstream": "https://github.com/espressif/arduino-esp32/blob/3.3.5/libraries/BLE/src/BLEService.cpp",
+    "upstream_sha256": "6c95afceec18f161575c4d682571d05bc03e5ca26976e066213e2234ae220124",
+    "patched_sha256": "b6bcfda1225ffb7013fab519b456cf059221b6ace155a35f1b70144090f629d8"
   },
   "path_normalization": {
     "flags": [
@@ -152,7 +271,7 @@
     "compileOutput": "/arduino/build"
   },
   "extended_source_sha256": {
-    "scripts/build_extended_firmware.sh": "a632d11d33158376c29aefaf43427ac7711c86d480f63214d506d8b1c9e98ffb",
-    "scripts/package_extended_firmware.py": "55d48d2440df01826e13a12db1b26495c5643479ee9af8f6ee47a15bf8e38ee8"
+    "scripts/build_extended_firmware.sh": "c1bf0d6a90ad43365a3ff1d7793576576e27d6fc9d4317b8281fef82bc7ae175",
+    "scripts/package_extended_firmware.py": "428722aca93b4071b0ffe38333f2985c645700fd1b9fe11cb5886eb4290e97cf"
   }
 }

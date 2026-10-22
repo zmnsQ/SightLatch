@@ -1,0 +1,13 @@
+--- a/src/BLEService.cpp
++++ b/src/BLEService.cpp
+@@ -244,7 +244,9 @@
+   }
+ 
+ #if defined(CONFIG_NIMBLE_ENABLED)
+-  if (pExisting != nullptr) {
++  // HID has distinct Report characteristics with the same 0x2A4D UUID.
++  // Only re-adding the identical object may skip registration.
++  if (pExisting == pCharacteristic) {
+     pExisting->m_removed = 0;
+   } else
+ #endif
