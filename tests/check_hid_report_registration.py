@@ -1,7 +1,10 @@
 """Exercise the actual pinned upstream addCharacteristic body before/after our patch."""
 from pathlib import Path
+from contextlib import redirect_stdout
 import hashlib
 import importlib.util
+import io
+import json
 import shutil
 import subprocess
 import tempfile
@@ -13,6 +16,9 @@ spec = importlib.util.spec_from_file_location('ble_fix', ROOT / 'scripts/prepare
 ble_fix = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ble_fix)
 FIXTURE = ROOT / 'tests/fixtures/arduino-esp32-3.3.5/BLEService.cpp'
+package_spec = importlib.util.spec_from_file_location('app_updates', ROOT / 'scripts/package_application_updates.py')
+app_updates = importlib.util.module_from_spec(package_spec)
+package_spec.loader.exec_module(app_updates)
 
 # Platform seams only: pointer-keyed characteristic map matches BLECharacteristicMap.cpp.
 # The registration function under test is copied verbatim, never reimplemented here.
@@ -61,12 +67,47 @@ int main() {
 
 
 class HIDReportRegistration(unittest.TestCase):
+    def test_app_update_packaging_on_clean_checkout_creates_evidence_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            public = root / 'public'
+            (public / 'firmware').mkdir(parents=True)
+            builds = []
+            for family, mode, folder, chip, boot_offset in (
+                ('ESP32-C3', 'usb', 'usb', 5, 0), ('ESP32-C3', 'uart', 'uart', 5, 0),
+                ('ESP32', 'uart', 'esp32-uart', 0, 0x1000),
+                ('ESP32-S3', 'usb', 's3-usb', 9, 0), ('ESP32-S3', 'uart', 's3-uart', 9, 0),
+            ):
+                source = root / 'firmware/build' / folder
+                source.mkdir(parents=True)
+                prefix = bytearray(b'\xff' * 0x10000)
+                bootloader, partitions = b'bootloader', b'partitions'
+                prefix[boot_offset:boot_offset + len(bootloader)] = bootloader
+                prefix[0x8000:0x8000 + len(partitions)] = partitions
+                app = bytearray(32)
+                app[0], app[12] = 0xe9, chip
+                for suffix, data in (('bootloader.bin', bootloader), ('partitions.bin', partitions), ('bin', app)):
+                    (source / ('IPhoneHIDBridge.ino.' + suffix)).write_bytes(data)
+                path = f'firmware/sightlatch-0.2.3-{family}-{mode}.bin'
+                (public / path).write_bytes(prefix + app)
+                (public / path.replace('0.2.3', '0.2.2')).write_bytes(prefix)
+                builds.append({'chipFamily': family, 'variant': mode, 'parts': [{'path': path}]})
+            (public / 'firmware/manifest.json').write_text(json.dumps({
+                'version': '0.2.3', 'builds': builds, 'source_sha256': {}}))
+            self.assertFalse((root / 'build').exists())
+            with patch.object(app_updates, 'ROOT', root), patch.object(app_updates, 'PUBLIC', public), redirect_stdout(io.StringIO()):
+                app_updates.package()
+            evidence = json.loads((root / 'build/application-updates-0.2.3.json').read_text())
+            self.assertEqual(len(evidence['builds']), 5)
+            self.assertTrue(all(build['prefix_0_to_0x10000_identical'] for build in evidence['builds']))
+            self.assertEqual(len(list((public / 'firmware').glob('*-app.bin'))), 5)
+
     def test_effective_cli_data_directory_for_defaults_and_explicit_configuration(self):
         # Observed Arduino CLI 1.3.1 responses: config dump has no directories
         # for defaults, while config get returns the effective data directory.
         for expected in ('/home/runner/.arduino15', '/build/custom Arduino data'):
             with self.subTest(path=expected), patch.object(
-                ble_fix.subprocess, 'check_output', return_value=ble_fix.json.dumps(expected).encode()
+                ble_fix.subprocess, 'check_output', return_value=json.dumps(expected).encode()
             ) as query:
                 self.assertEqual(ble_fix.data_directory('arduino-cli'), Path(expected))
                 query.assert_called_once_with(['arduino-cli', 'config', 'get', 'directories.data', '--json'])
@@ -74,7 +115,7 @@ class HIDReportRegistration(unittest.TestCase):
     def test_missing_or_invalid_effective_data_directory_is_rejected(self):
         for value in (None, '', ' ', {}, []):
             with self.subTest(value=value), patch.object(
-                ble_fix.subprocess, 'check_output', return_value=ble_fix.json.dumps(value).encode()
+                ble_fix.subprocess, 'check_output', return_value=json.dumps(value).encode()
             ):
                 with self.assertRaisesRegex(SystemExit, 'directories.data'):
                     ble_fix.data_directory('arduino-cli')

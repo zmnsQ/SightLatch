@@ -251,7 +251,7 @@
     "scripts/firmware_provenance.py": "95f220e4e614e3adba46f58dbbb37b6db96267d33f2c96c24ee574f910cc69f9",
     "scripts/package_firmware.py": "29cae3d357b5d4eff88a48b0d8fc840f7bb6e0ed47942de8935e8564ecf6c6db",
     "scripts/prepare_ble_library.py": "c5fb1606c649d4e58788be6d1433b42b116fc048b7aa659474607a86587103f5",
-    "scripts/package_application_updates.py": "f51498d2ba631c14335c602fb94dfb0c72b132dd103e364a946e6734202526b6"
+    "scripts/package_application_updates.py": "07629d87e183a32655029ac60556eff074ba88147adf862ad6789d9b333ce89c"
   },
   "ble_compatibility": {
     "patch": "firmware/IPhoneHIDBridge/BLEService-3.3.5.patch",

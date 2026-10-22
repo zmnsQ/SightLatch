@@ -52,6 +52,7 @@ def package():
     (PUBLIC / 'firmware/manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     # Keep the byte-for-byte comparison evidence locally as well.
     target = ROOT / 'build' / f'application-updates-{VERSION}.json'
+    target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(evidence, indent=2) + '\n')
     print(target)
     print(''.join(sums), end='')
