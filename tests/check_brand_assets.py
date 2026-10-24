@@ -28,9 +28,23 @@ class BrandAssets(unittest.TestCase):
     def test_target_wiring(self):
         s=(ROOT/'ios/SightLatch.xcodeproj/project.pbxproj').read_text()
         self.assertEqual(s.count('ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;'),2)
-        self.assertIn('path = "App/Assets.xcassets"',s)
-        phases=re.findall(r'(\w+) = \{ isa = PBXResourcesBuildPhase;.*?files = \((.*?)\);',s)
-        self.assertEqual(len(phases),3)
-        self.assertEqual([p for p,files in phases if files],['631EF28DFA55C2E5FC8EC96C'])
+        # Xcode may reformat or unquote paths. Follow actual catalog membership
+        # instead of fixing object IDs or assuming only the App has resources.
+        clean=re.sub(r'/\*.*?\*/','',s,flags=re.S)
+        objects=dict(re.findall(r'([A-F0-9]{24})\s*=\s*\{([^{}]*)\};',clean,re.S))
+        def field(obj,key):
+            value=re.search(r'\b'+key+r'\s*=\s*([^;]+);',obj)
+            self.assertIsNotNone(value,(key,obj))
+            return value[1].strip().strip('"')
+        targets={field(obj,'name'):obj for obj in objects.values() if 'isa = PBXNativeTarget;' in obj}
+        expected={'SightLatch':['App/Assets.xcassets'],'SightLatchWidget':['Widget/Assets.xcassets'],'SightLatchBroadcast':[]}
+        self.assertEqual(set(targets),set(expected))
+        for name,catalogs in expected.items():
+            phases=[objects[uid] for uid in re.findall(r'[A-F0-9]{24}',field(targets[name],'buildPhases'))
+                    if 'isa = PBXResourcesBuildPhase;' in objects[uid]]
+            self.assertEqual(len(phases),1,name)
+            actual=[field(objects[field(objects[uid],'fileRef')],'path')
+                    for uid in re.findall(r'[A-F0-9]{24}',field(phases[0],'files'))]
+            self.assertEqual(actual,catalogs,name)
         self.assertIn('Image("BrandMark")',(ROOT/'ios/App/HomeView.swift').read_text())
 if __name__=='__main__':unittest.main()

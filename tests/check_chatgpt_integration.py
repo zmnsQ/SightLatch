@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Read-only integration source contracts; not Apple SDK typechecking."""
 from pathlib import Path
+import json
+import re
 import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -8,6 +10,19 @@ def source(path):
     return (ROOT / path).read_text()
 
 class ChatGPTIntegration(unittest.TestCase):
+    def test_visual_prompt_keys_match_gate_and_wait_needs_no_pointer(self):
+        network = source("ios/Shared/Network.swift")
+        prompt = network.split('var system = """', 1)[1].split('"""', 1)[0]
+        advertised = re.search(r"Ordinary key actions support only ([A-Z,]+)\.", prompt)
+        self.assertIsNotNone(advertised)
+        key_gate = network.split("enum SafetyGate {", 1)[1].split("case .key:", 1)[1].split("case .text:", 1)[0]
+        allowed = re.search(r'(\["ESC"[^\]]*\])\.contains\(action.key', key_gate)
+        self.assertIsNotNone(allowed)
+        self.assertEqual(set(advertised[1].split(",")), set(json.loads(allowed[1])))
+        self.assertIn("A pure wait sends no HID, needs no visible pointer", prompt)
+        self.assertIn("For move/click the pointer and next target must be visually located in this frame", prompt)
+        self.assertIn("The floating AssistiveTouch menu/control is not the mouse pointer", prompt)
+
     def test_key_creation_has_explicit_string_keys(self):
         auth = source("ios/Shared/ChatGPTOAuth.swift")
         self.assertIn("[kSecAttrKeyType as String: kSecAttrKeyTypeRSA, kSecAttrKeyClass as String: kSecAttrKeyClassPublic] as CFDictionary", auth)

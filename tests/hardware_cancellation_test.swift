@@ -1,15 +1,14 @@
 import Foundation
+#if canImport(FoundationNetworking)
 import FoundationNetworking
+#endif
 
 // Production HardwareClient is compiled unchanged by run_agent_tests.sh. No real URLSession/HID.
-enum PilotError: LocalizedError { case message(String) }
-struct PilotConfiguration { let deviceURL = "http://test.local"; let deviceAccount = "test" }
 enum SecretStore { static func load(_ key: String) throws -> String { "fake-test-token" } }
 enum AddressPolicy { static func device(_ url: String) throws -> URL { URL(string: url)! } }
-struct ActionProposal {
-    enum Kind: String { case click, text }
-    var type = Kind.click
-    var dx: Int?; var dy: Int?; var wheel: Int?; var key: String?; var text: String?
+extension ActionProposal {
+    init() { self.init(type: .click, purpose: "navigation", risk: "low", requiresConfirmation: false,
+        reason: "查看界面", pointerVisible: true, highRisk: false, confidence: 0.99) }
 }
 final class Transport {
     static let shared = Transport()
@@ -35,6 +34,21 @@ final class Transport {
             preconditionFailure("Revoked proposal dispatched")
         } catch is CancellationError {}
         precondition(transport.calls == ["/v1/status"])
+        // A deadline can pass during the device status await. This is a typed
+        // pre-dispatch failure: no message attempt or action has been submitted.
+        transport.calls = []
+        var reservations = 0
+        let frameDeadline = Date().addingTimeInterval(0.01)
+        transport.handler = { _ in
+            try await Task.sleep(nanoseconds: 30_000_000)
+            return status
+        }
+        do {
+            try await hardware.send(ActionProposal(), expectedSession: "session", frameDeadline: frameDeadline,
+                                    reserveMessageAction: { reservations += 1 })
+            preconditionFailure("Expired proposal dispatched")
+        } catch HardwareClient.PreDispatchFailure.frameExpired {}
+        precondition(transport.calls == ["/v1/status"] && reservations == 0)
         // Task cancellation while an uncooperative transport finishes also cannot dispatch.
         transport.calls = []
         let task = Task {
@@ -155,6 +169,31 @@ final class Transport {
             catch { precondition(!accepted) }
             precondition(transport.calls == ["/v1/arm"], "ARM must never retry")
         }
+        // Message paste is a fixed Cmd-V and reservation is consumed before POST, even if its reply is lost.
+        var paste = ActionProposal(); paste.type = .key; paste.purpose = "message_paste"; paste.key = "PASTE_MESSAGE"
+        transport.calls = []; var reserved = false
+        transport.handler = { request in
+            if request.url!.path == "/v1/action" {
+                precondition(reserved, "One-shot reservation must precede the side effect")
+                let action = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+                precondition(action["key"] as? Int == 25 && action["modifiers"] as? Int == 8)
+                throw URLError(.timedOut)
+            }
+            return status
+        }
+        do { try await hardware.send(paste, expectedSession: "session"); preconditionFailure("Unscoped paste dispatched") } catch {}
+        precondition(!transport.calls.contains("/v1/action"))
+        for _ in 0..<2 {
+            do {
+                try await hardware.send(paste, expectedSession: "session", reserveMessageAction: {
+                    guard !reserved else { throw PilotError.message("already consumed") }
+                    reserved = true
+                })
+                preconditionFailure("Timeout incorrectly succeeded")
+            } catch {}
+        }
+        precondition(reserved && transport.calls.filter { $0 == "/v1/action" }.count == 1)
+        print("PASS: fixed Cmd-V mapping, required one-shot reservation, reservation-before-POST and no replay after uncertain reply")
         print("PASS: actual HardwareClient calibration mode body and hardware TTL confirmation guards")
         print("PASS: exact boot/epoch request bodies, rotated pair epoch, unchanged ARM epoch, missing/stale epoch rejection and no control retry")
         print("PASS: stop during async status, cancellation before dispatch, cancellation after ACK, late completion after STOP; no HID replay")

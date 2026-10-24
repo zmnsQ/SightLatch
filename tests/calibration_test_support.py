@@ -1,4 +1,6 @@
 """Compile production calibration types; replace only Apple platform/storage seams."""
+from __future__ import annotations
+
 from pathlib import Path
 import sys
 
@@ -9,6 +11,7 @@ def write_production_sources(root: Path, build: Path) -> list[Path]:
     start = models.index("struct PilotActivityAttributes:")
     end = models.index("enum PilotError:", start)
     models = models[:start] + models[end:]
+    models += "\n" + (root / "tests/session_execution_test_support.swift").read_text()
 
     network = (root / "ios/Shared/Network.swift").read_text()
     start = network.index("struct DeviceStatus:")

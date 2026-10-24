@@ -34,6 +34,15 @@ class ShortcutsContracts(unittest.TestCase):
         self.assertIn('sightlatch://chat', widget)
         self.assertIn('context.isStale', widget)
         manager = read('ios/App/PilotActivityManager.swift')
-        for required in ['5 - Date()', 'latest[id]', 'stage.needsAttention', 'alerted[id', 'stage.isTerminal && !running']:
-            self.assertIn(required, manager)
-if __name__ == '__main__': unittest.main(verbosity=2)
+        self.assertIn('PilotActivityPublisher.shared.publish(status, running: running)',manager)
+        publisher = read('ios/Shared/PilotActivityPresentation.swift').split('actor PilotActivityPublisher',1)[1]
+        publication = publisher.split('func publish(',1)[1]
+        self.assertIn('command?.id == status.sessionID',publication)
+        self.assertIn('$0.updatedAt > state.updatedAt || $0 == state',publication)
+        self.assertIn('store.claimActivityAlert(sessionID: status.sessionID, key: key)',publication)
+        self.assertIn('activity.update(content, alertConfiguration: alert, timestamp: state.updatedAt)',publication)
+        self.assertNotIn('activity.end(',publication)
+        finishing = publisher.split('func finishAfterHardwareStop(',1)[1].split('func publish(',1)[0]
+        self.assertIn('PilotActivityStage(phase: status.phase).isTerminal',finishing)
+        self.assertIn('activity.end(',finishing)
+if __name__=='__main__': unittest.main(verbosity=2)

@@ -10,12 +10,21 @@ python3 - "$SOURCE_ROOT/ios/Shared/SharedStore.swift" "$BUILD/SharedStore.swift"
 from pathlib import Path
 import sys
 source = Path(sys.argv[1]).read_text().split('enum SecretStore', 1)[0]
-source = source.replace('import Security\n', '').replace('import Darwin', 'import Glibc')
+source = source.replace('import Security\n', '').replace(
+    'import Darwin', '#if canImport(Darwin)\nimport Darwin\n#elseif canImport(Glibc)\nimport Glibc\n#endif')
 start = source.index('    private var directory: URL? {')
 end = source.index('    var available:', start)
 source = source[:start] + '    private var directory: URL? { URL(fileURLWithPath: ProcessInfo.processInfo.environment["SIGHTLATCH_TEST_STORE"]!) }\n' + source[end:]
 source = source.replace('[.atomic, .completeFileProtection]', '[.atomic]').replace('[.atomic, .completeFileProtectionUntilFirstUserAuthentication]', '[.atomic]')
 Path(sys.argv[2]).write_text(source)
 PY
-"$SWIFTC" -module-cache-path "$BUILD/cache" "$BUILD/SharedStore.swift" tests/shared_store_fence_test.swift -o "$BUILD/store-tests"
+python3 - "$SOURCE_ROOT/ios/Shared/Models.swift" "$BUILD/Models.swift" <<'PYMODELS'
+from pathlib import Path
+import sys
+source = Path(sys.argv[1]).read_text().replace('import ActivityKit\n', '')
+a = source.index('struct PilotActivityAttributes:')
+b = source.index('enum PilotError:', a)
+Path(sys.argv[2]).write_text(source[:a] + source[b:])
+PYMODELS
+"$SWIFTC" -module-cache-path "$BUILD/cache" "$BUILD/Models.swift" "$BUILD/SharedStore.swift" tests/shared_store_fence_test.swift -o "$BUILD/store-tests"
 SIGHTLATCH_TEST_STORE="$BUILD/store" "$BUILD/store-tests"

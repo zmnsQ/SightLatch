@@ -7,6 +7,8 @@ PILOT_APP_GROUP = group.$(PILOT_BUNDLE_PREFIX)
 // AppIdentifierPrefix is supplied by signing; it is not always the Team ID.
 PILOT_KEYCHAIN_GROUP = $(AppIdentifierPrefix)$(PILOT_BUNDLE_PREFIX).shared
 SWIFT_VERSION = 5.0
+// Compile the sanitized pairing diagnostics only in development builds.
+SWIFT_ACTIVE_COMPILATION_CONDITIONS[config=Debug] = $(inherited) DEBUG
 IPHONEOS_DEPLOYMENT_TARGET = 18.0
 TARGETED_DEVICE_FAMILY = 1
 CODE_SIGN_STYLE = Automatic
