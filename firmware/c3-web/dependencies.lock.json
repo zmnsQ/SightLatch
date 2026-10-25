@@ -1,0 +1,27 @@
+{
+  "arduinoCli": "1.3.1",
+  "core": "3.3.11",
+  "additionalURL": "https://espressif.github.io/arduino-esp32/package_esp32_index.json",
+  "sourceDateEpoch": 1792800000,
+  "libraries": [
+    {
+      "name": "NimBLE-Arduino",
+      "version": "2.5.1",
+      "directory": "NimBLE-Arduino",
+      "url": "https://downloads.arduino.cc/libraries/github.com/h2zero/NimBLE_Arduino-2.5.1.zip",
+      "sha256": "8fb09b1cde59f4ca5e6172d620c379968db959a883209289a9315b03eec27fe2"
+    },
+    {
+      "name": "ArduinoJson",
+      "version": "7.0.4",
+      "directory": "ArduinoJson",
+      "url": "https://downloads.arduino.cc/libraries/github.com/bblanchon/ArduinoJson-7.0.4.zip",
+      "sha256": "53954b7a77ae9de4c3e217505291c211e8076141fcea9fe6657e4f18b3ac2e71"
+    }
+  ],
+  "nimbleSourcePatches": [],
+  "coreArchive": {
+    "url": "https://github.com/espressif/arduino-esp32/releases/download/3.3.11/esp32-core-3.3.11.zip",
+    "sha256": "a18203f2429f5551ec929b80e8129e439df7a3a009b536b305f00b4a1f1bbb62"
+  }
+}

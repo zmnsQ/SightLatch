@@ -7,7 +7,8 @@ const $=id=>document.getElementById(id);
 let loader,transport,manifest,busy=false;
 const supported=isSecureContext&&("serial" in navigator);
 const log=s=>{$('log').textContent=($('log').textContent+'\n'+s).slice(-14000);};
-function state(){for(const id of ['connect','configure','readStatus','serialMode','chipFamily','updateConsent'])$(id).disabled=busy||!supported; $('disconnect').disabled=busy||!transport;$('flash').disabled=busy||!supported||!loader||!manifest||!$('consent').checked;let updateAvailable=false;try{validateUpdateManifest(manifest,$('serialMode').value,$('chipFamily').value);updateAvailable=true;}catch{}$('upgrade').disabled=busy||!supported||!updateAvailable||!$('updateConsent').checked;}
+function releaseLabels(){if(!manifest)return;try{const b=validateManifest(manifest,$('serialMode').value,$('chipFamily').value),v=b.version||manifest.version,latest=v==='0.3.3-c3-web';$('version').textContent='所选版本 '+v+' · '+b.chipFamily+' / '+b.variant+' · '+(latest?'公开C3测试版，尚无实板回归；Wi-Fi/LAN掉线问题未解决':'历史版本，未升级为0.3.3');$('upgrade').textContent='保留配置升级到 '+v;$('updateTitle').textContent=latest?'已有C3安装？保留配置升级':'已安装0.2.2？历史保配置升级';$('updateDescription').textContent=latest?'仅更新应用；保留Wi-Fi和控制令牌。会先核对bootloader与分区，布局不符则拒绝。公开版使用每芯片稳定蓝牙身份，升级后可能需要忘记旧蓝牙记录、重新配对并校准。':'仅适用于此前安装本页0.2.2的兼容布局；只读核对bootloader和分区，仅更新应用。';}catch(e){$('version').textContent=message(e);}}
+function state(){releaseLabels();for(const id of ['connect','configure','readStatus','serialMode','chipFamily','updateConsent'])$(id).disabled=busy||!supported; $('disconnect').disabled=busy||!transport;$('flash').disabled=busy||!supported||!loader||!manifest||!$('consent').checked;let updateAvailable=false;try{validateUpdateManifest(manifest,$('serialMode').value,$('chipFamily').value);updateAvailable=true;}catch{}$('upgrade').disabled=busy||!supported||!updateAvailable||!$('updateConsent').checked;}
 async function disconnect(){loader=null;if(transport){try{await transport.disconnect();}finally{transport=null;}}state();}
 function message(e){return e?.name==='NotFoundError'?'已取消选择设备。':String(e?.message||e);}
 async function run(task,target='status'){if(busy)return;busy=true;state();try{await task();}catch(e){$(target).textContent=message(e);log(message(e));try{await disconnect();}catch{} }finally{busy=false;state();}}
@@ -28,7 +29,7 @@ $('flash').onclick=()=>run(async()=>{
   if(!loader||!$('consent').checked)throw Error('请先识别设备并确认擦除。');
   validateDevice(loader.chip.CHIP_NAME,await loader.getFlashSize(),$('chipFamily').value);
   const build=validateManifest(manifest,$('serialMode').value,loader.chip.CHIP_NAME),part=build.parts[0];
-  if(!window.confirm(`安装 ${manifest.version}（${build.variant}）会永久清空这块 ${build.chipFamily} 的全部 Flash。确定继续？`))return;
+  if(!window.confirm(`安装 ${build.version||manifest.version}（${build.variant}）会永久清空这块 ${build.chipFamily} 的全部 Flash。确定继续？`))return;
   const res=await fetch(new URL(part.path,document.baseURI),{cache:'no-store'});if(!res.ok)throw Error('镜像下载失败');
   const bytes=new Uint8Array(await res.arrayBuffer());validateImage(bytes,build.chipFamily);
   const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),x=>x.toString(16).padStart(2,'0')).join('');
@@ -41,7 +42,7 @@ $('flash').onclick=()=>run(async()=>{
 });
 const sha256=async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),x=>x.toString(16).padStart(2,'0')).join('');
 $('upgrade').onclick=()=>run(async()=>{
-  if(!$('updateConsent').checked)throw Error('请先确认设备已安装兼容的0.2.2固件。');
+  if(!$('updateConsent').checked)throw Error('请先确认已有兼容布局，并选对芯片和USB接口。');
   const update=validateUpdateManifest(manifest,$('serialMode').value,$('chipFamily').value),app=update.application;
   $('upgradeStatus').textContent='正在校验应用镜像；尚未写入设备…';
   const response=await fetch(new URL(app.path,document.baseURI),{cache:'no-store'});
@@ -57,16 +58,16 @@ $('upgrade').onclick=()=>run(async()=>{
   $('upgradeStatus').textContent='正在只读核对bootloader和分区表；不读取Wi-Fi或令牌配置…';
   for(const range of [update.compatibility.bootloader,update.compatibility.partitions]){
     const current=await loader.readFlash(range.offset,range.size);
-    if(current.length!==range.size||await sha256(current)!==range.sha256)throw Error('设备布局与0.2.2不匹配，已停止，未擦写。请查看下方全新安装入口；不会自动清空配置。');
+    if(current.length!==range.size||await sha256(current)!==range.sha256)throw Error('设备布局与此升级镜像不匹配，已停止，未擦写。请查看下方全新安装入口；不会自动清空配置。');
   }
-  if(!window.confirm(`保留配置升级到${manifest.version}（${update.chipFamily} / ${update.variant}）？仅写入应用区，保留Wi-Fi、控制令牌和配对数据。下载模式无法检测旧固件版本；须确认此前安装的是0.2.2。`)){
+  if(!window.confirm(`保留配置升级到${update.version}（${update.chipFamily} / ${update.variant}）？仅写入应用区，保留Wi-Fi、控制令牌和配对数据。下载模式无法检测旧固件版本；需要兼容本页核对的bootloader和分区；蓝牙身份变化时可能需要重新配对与校准。`)){
     await loader.after('hard_reset');await disconnect();$('upgradeStatus').textContent='已取消升级，未擦写。';return;
   }
   let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));
   $('upgradeStatus').textContent='兼容检查通过，正在升级应用。请勿拔线…';
   await loader.writeFlash({fileArray:[{data:binary,address:0x10000}],flashSize:'4MB',flashMode:'dio',flashFreq:families[update.chipFamily].frequency,eraseAll:false,compress:true,calculateMD5Hash:data=>SparkMD5.hashBinary(data),reportProgress:(_,n,total)=>{$('progress').value=n/total*100;}});
   await loader.after('hard_reset');await disconnect();$('updateConsent').checked=false;
-  $('upgradeStatus').textContent='应用写入及MD5校验完成，原配置区域未擦写。重新启动后读取状态，核实0.2.3；升级不等于真机功能已验收。';
+  $('upgradeStatus').textContent='应用写入及MD5校验完成，原配置区域未擦写。重新启动后读取状态核实所选版本；C3公开测试版可能需重新配对与校准，升级不等于真机功能已验收。';
 },'upgradeStatus');
 $('generate').onclick=()=>{$('token').value=Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');};
 $('show').onclick=()=>{$('token').type=$('token').type==='password'?'text':'password';};
@@ -94,5 +95,5 @@ $('config').onsubmit=e=>{e.preventDefault();run(async()=>{
 },'configStatus');};
 $('readStatus').onclick=()=>run(async()=>{const r=await serialCommand({command:'status'});$('configStatus').textContent=`固件 ${r.firmware_version} · 已配置：${r.configured?'是':'否'} · IP：${r.ip}（0.0.0.0表示尚未连上Wi-Fi）`;$('deviceDiagnostics').textContent=deviceDiagnostics(r);},'configStatus');
 if(!isSecureContext||!('serial' in navigator)){for(const b of document.querySelectorAll('button'))b.disabled=true;$('status').textContent='需要电脑Chrome/Edge和HTTPS或localhost。iPhone Safari不支持本页串口烧录。';}
-fetch(new URL('firmware/manifest.json',document.baseURI),{cache:'no-store'}).then(r=>{if(!r.ok)throw Error('manifest下载失败');return r.json();}).then(m=>{validateManifest(m,'usb');validateManifest(m,'uart');manifest=m;state();$('version').textContent=`版本 ${m.version} · Arduino-ESP32 ${m.core} · 按芯片选择USB接口镜像 · SHA-256下载校验 + 写入MD5校验`;}).catch(e=>{$('version').textContent=message(e);$('flash').disabled=true;});
+fetch(new URL('firmware/manifest.json',document.baseURI),{cache:'no-store'}).then(r=>{if(!r.ok)throw Error('manifest下载失败');return r.json();}).then(m=>{validateManifest(m,'usb');validateManifest(m,'uart');manifest=m;state();}).catch(e=>{$('version').textContent=message(e);$('flash').disabled=true;});
 window.addEventListener('pagehide',()=>{$('password').value='';$('token').value='';});

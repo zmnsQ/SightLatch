@@ -21,3 +21,6 @@ __pycache__/
 firmware/IPhoneHIDBridge/config.h
 ios/Config/Local.xcconfig
 *.log
+
+# Public C3 builds reject local credentials; never publish local overrides.
+firmware/c3-web/IPhoneHIDBridge/config.h

@@ -1,3 +1,5 @@
+> Current public C3 test release: **0.3.3-c3-web**. See [C3 source/build/migration notes](c3-web/README.md). ESP32/S3 and the source below remain historical 0.2.3. The public C3 build awaits hardware regression; known Wi-Fi/LAN failures remain unresolved.
+
 # ESP32 / C3 / S3 公共零外接引脚构建
 
 公共构建兼容性以[矩阵](../docs/BOARD_COMPATIBILITY.zh-CN.md)为准。C3 安装与软件控制请看 [零引脚安装说明](../docs/ESP32_C3_SETUP.zh-CN.md) 和 [网页安装器](../web-installer/README.md)。默认公共构建不需要 config.h 或外接按钮，凭据经 USB 写入，配对/授权/停止从 App 发起。以下 S3 按钮步骤是旧 config.h 模式的历史说明，不适用于任何公共零 GPIO 镜像。

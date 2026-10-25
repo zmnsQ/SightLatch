@@ -3,7 +3,8 @@ import hashlib,json
 from firmware_provenance import source_id
 from prepare_ble_library import UPSTREAM_SHA256, PATCHED_SHA256
 root=Path(__file__).resolve().parents[1]/'web-installer/public'
-m=json.loads((root/'firmware/manifest.json').read_text())
+legacy=root/'firmware/manifest-legacy-0.2.3.json'
+m=json.loads((legacy if legacy.exists() else root/'firmware/manifest.json').read_text())
 assert m['version']=='0.2.3'
 assert m['ble_compatibility']['upstream_sha256']==UPSTREAM_SHA256
 assert m['ble_compatibility']['patched_sha256']==PATCHED_SHA256

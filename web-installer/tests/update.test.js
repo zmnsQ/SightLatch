@@ -15,8 +15,8 @@ function fixture(){
  const manifest={version:'0.2.3',core:'3.3.5',builds:['usb','uart'].map(variant=>({variant,chipFamily:'ESP32-C3',parts:[{path:'firmware/test.bin',offset:0,sha256:'a'.repeat(64)}],update:structuredClone(update)}))};
  return{app,boot,partitions,manifest};
 }
-async function setup({confirm=true,chip='ESP32-C3',badLayout=false,badApp=false}={}){
- const data=fixture(),dom=new JSDOM(html,{url:'https://example.test/install/',runScripts:'outside-only'}),w=dom.window,reads=[],writes=[];let requests=0;
+async function setup({confirm=true,chip='ESP32-C3',badLayout=false,badApp=false,latest=false}={}){
+ const data=fixture();if(latest){data.manifest.version='0.3.3-c3-web';for(const b of data.manifest.builds){b.version='0.3.3-c3-web';b.update.compatibility.fromVersion='compatible-c3-layout';}}const dom=new JSDOM(html,{url:'https://example.test/install/',runScripts:'outside-only'}),w=dom.window,reads=[],writes=[];let requests=0;
  w.isSecureContext=true;Object.assign(w,validation);w.TextEncoder=TextEncoder;w.TextDecoder=TextDecoder;
  Object.defineProperty(w.crypto,'subtle',{value:webcrypto.subtle});
  Object.defineProperty(w.navigator,'serial',{value:{requestPort:async()=>{requests++;return{};}}});
@@ -29,7 +29,8 @@ async function setup({confirm=true,chip='ESP32-C3',badLayout=false,badApp=false}
  };
  w.SparkMD5={hashBinary:()=>''};w.confirm=()=>confirm;
  w.fetch=async url=>String(url).endsWith('-app.bin')?{ok:true,arrayBuffer:async()=>{const b=new Uint8Array(data.app);if(badApp)b[20]^=1;return b.buffer;}}:{ok:true,json:async()=>data.manifest};
- w.eval(script);const settle=()=>new Promise(r=>setTimeout(r,30));await settle();
+ w.eval(script+'\nwindow.testOperationIdle=()=>!busy&&!!manifest;');
+ const settle=async()=>{const end=Date.now()+5000;while(!w.testOperationIdle()){if(Date.now()>end)throw Error('installer operation did not settle');await new Promise(r=>setTimeout(r,10));}};await settle();
  return{w,reads,writes,settle,get requests(){return requests;},close:()=>w.close()};
 }
 function enableUpgrade(w){const checkbox=w.document.getElementById('updateConsent');checkbox.checked=true;checkbox.dispatchEvent(new w.Event('change'));}
@@ -62,4 +63,22 @@ test('canceling compatible upgrade never writes flash',async()=>{
 test('all packaged application updates match selected family, size and digest',()=>{
  const manifest=JSON.parse(readFileSync(new URL('../public/firmware/manifest.json',import.meta.url)));
  for(const build of manifest.builds){const update=validation.validateUpdateManifest(manifest,build.variant,build.chipFamily),app=update.application,bytes=new Uint8Array(readFileSync(new URL('../public/'+app.path,import.meta.url)));validation.validateApplication(bytes,build.chipFamily,app.size);assert.equal(hash(bytes),app.sha256);for(const family of Object.keys(validation.families)){if(family!==build.chipFamily)assert.throws(()=>validation.validateApplication(bytes,family,app.size));}}
+});
+
+test('public C3 compatible-layout upgrade requires consent and writes application only',async()=>{
+ const x=await setup({latest:true});try{
+  assert.match(x.w.document.getElementById('version').textContent,/0.3.3-c3-web.*尚无实板回归/);
+  assert.doesNotMatch(x.w.document.getElementById('updateTitle').textContent,/0.2.2|0.2.3/);
+  assert.match(x.w.document.getElementById('updateDescription').textContent,/重新配对并校准/);
+  assert.equal(x.requests,0);enableUpgrade(x.w);x.w.document.getElementById('upgrade').click();await x.settle();
+  assert.equal(x.writes.length,1);assert.equal(x.writes[0].eraseAll,false);
+  assert.deepEqual(x.reads,[{offset:0,size:32},{offset:32768,size:32}]);
+  assert.equal(x.writes[0].fileArray[0].address,65536);
+ }finally{x.close();}
+});
+test('composite catalog never relabels ESP32 or S3 as latest C3',()=>{
+ const catalog=JSON.parse(readFileSync(new URL('../public/firmware/manifest.json',import.meta.url)));
+ for(const build of catalog.builds){assert.equal(build.version,build.chipFamily==='ESP32-C3'?'0.3.3-c3-web':'0.2.3');}
+ const invalid=structuredClone(catalog);const s3=invalid.builds.find(b=>b.chipFamily==='ESP32-S3');s3.version='0.3.3-c3-web';
+ assert.throws(()=>validation.validateManifest(invalid,s3.variant,s3.chipFamily));
 });

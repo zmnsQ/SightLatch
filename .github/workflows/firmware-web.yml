@@ -1,36 +1,37 @@
-name: Build ESP32 family firmware and USB installer
+name: Build public C3 test firmware and USB installer
 on:
   push:
-    paths: ['firmware/**', 'web-installer/**', 'scripts/*firmware*', 'scripts/prepare_ble_library.py', 'tests/check_hid_report_registration.py', 'tests/fixtures/arduino-esp32-3.3.5/**', '.github/workflows/firmware-web.yml']
+    paths: ['firmware/**', 'web-installer/**', 'scripts/**', 'tests/check_c3_web_*.py', '.github/workflows/firmware-web.yml']
   pull_request:
-    paths: ['firmware/**', 'web-installer/**', 'scripts/*firmware*', 'scripts/prepare_ble_library.py', 'tests/check_hid_report_registration.py', 'tests/fixtures/arduino-esp32-3.3.5/**', '.github/workflows/firmware-web.yml']
+    paths: ['firmware/**', 'web-installer/**', 'scripts/**', 'tests/check_c3_web_*.py', '.github/workflows/firmware-web.yml']
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/setup-arduino-cli@v2
         with:
           version: '1.3.1'
-      - name: Install pinned official toolchain
+      - name: Verify checked-in current and historical images
         run: |
-          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
-          arduino-cli core install esp32:esp32@3.3.5 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
-          arduino-cli lib install ArduinoJson@7.0.4
-      - name: Compile actual ESP32 / C3 / S3 images and generate manifest
-        run: |
-          scripts/build_firmware.sh
-          scripts/build_extended_firmware.sh
           python3 scripts/verify_firmware.py
-          python3 tests/check_c3_firmware.py
-          python3 tests/check_arm_diagnostics.py
-          python3 tests/check_hid_report_registration.py
-          g++ -std=c++17 -Wall -Wextra -Werror tests/authentication_policy_test.cpp -o /tmp/auth-policy
-          /tmp/auth-policy
+          python3 scripts/verify_c3_web.py
+      - name: Install checksum-pinned isolated C3 toolchain
+        run: python3 scripts/prepare_c3_web_toolchain.py
+      - name: Test actual public absolute and renewable handlers
+        run: |
+          python3 tests/check_c3_web_identity.py
+          python3 tests/check_c3_web_absolute.py
+          python3 tests/check_c3_web_renewal.py
+      - name: Compile USB and UART C3 variants; retain historical ESP32 and S3
+        run: |
+          python3 scripts/build_c3_web.py --config-file build/c3-web/toolchain/arduino-cli.yaml
+          python3 scripts/compose_web_manifest.py
+          python3 scripts/verify_c3_web.py
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -41,10 +42,13 @@ jobs:
         run: npm ci && npm test && npm run build
       - uses: actions/upload-artifact@v4
         with:
-          name: sightlatch-c3-web-installer
+          name: sightlatch-public-c3-web-installer
           path: web-installer/dist/
       - uses: actions/upload-artifact@v4
         with:
-          name: sightlatch-c3-build-evidence
-          path: firmware/build/
-# No Pages permission or automatic deployment. Enable hosting separately with owner consent.
+          name: sightlatch-public-c3-build-evidence
+          path: |
+            build/c3-web/usb/build.log
+            build/c3-web/uart/build.log
+            web-installer/public/firmware/manifest-c3-web.json
+# Build artifact only. Pages deployment is a separate, validated workflow.

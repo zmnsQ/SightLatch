@@ -30,6 +30,8 @@ jobs:
           python3 tests/check_connection_diagnostics.py
           python3 tests/check_hid_report_registration.py
           python3 scripts/verify_firmware.py
+          python3 scripts/verify_c3_web.py
+          python3 tests/check_c3_web_identity.py
       - name: Build static installer
         working-directory: web-installer
         run: npm ci && npm test && npm run build
