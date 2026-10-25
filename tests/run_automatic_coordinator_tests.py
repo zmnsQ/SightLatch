@@ -50,7 +50,7 @@ with tempfile.TemporaryDirectory() as tmp:
   HardwareClient.calls=[]
   let pending=Task { await model.startAssistedCalibration() }
   try await Task.sleep(nanoseconds:50_000_000)
-  await model.cancelAutomaticCalibration()
+  await model.cancelAutomaticCalibration(source: .measurementStopButton, scene: .active)
   await pending.value
   precondition(!HardwareClient.device.armed)
   precondition(!HardwareClient.calls.contains("move"))

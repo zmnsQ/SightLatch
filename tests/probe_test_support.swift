@@ -28,6 +28,7 @@ struct DeviceStatus {
     var armed = false
     var pairing_open: Bool? = true
     var supportsSoftwareControl = true
+    var accessorySetupServiceUUID: String? = nil
 }
 enum DevicePairingCloseResult { case closed, unsupported, changed }
 struct DevicePairingReceipt { var ok = true; var pairing_open = true; var boot_id = "boot"; var control_epoch = String(repeating: "a", count: 32) }
@@ -47,7 +48,16 @@ struct HardwareClient {
     static var handler: (() async throws -> DeviceStatus) = { DeviceStatus() }
     func status() async throws -> DeviceStatus { Self.calls += 1; return try await Self.handler() }
 }
+@MainActor enum SightLatchAccessorySetupAdapter {
+    static var releaseCalls = 0
+    static func releaseConnectionsForSystemPairing() { releaseCalls += 1 }
+}
 @MainActor final class ProbeHarness {
+    struct BusyState { var isBusy = false }
+    var calibrationFlow = BusyState()
+    var automaticCalibration = BusyState()
+    var calibrationRequestInFlight = false
+    var checkingTaskPrerequisites = false
     var deviceProbeTask: Task<DeviceStatus, Error>?
     var deviceProbeID = UUID()
     var probing = false
@@ -60,6 +70,7 @@ struct HardwareClient {
     var sessionActive = false
     var isSessionActive: Bool { sessionActive || controllingDevice }
     var pairingState = DevicePairingState.idle
+    var pairingUsesSystemMouse = false
     var pairingTask: Task<Void, Never>?
     var pairingCancelRequested = false
     var pairingWindowDuration: TimeInterval = 0.08

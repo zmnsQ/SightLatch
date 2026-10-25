@@ -5,14 +5,59 @@ struct ChatGPTModel: Identifiable, Sendable {
     let displayName: String
 }
 
+enum ChatGPTRequestProfile {
+    static func body(model: String, instructions: String, task: String, jpeg: Data?) throws -> Data {
+        var content: [[String: Any]] = [["type": "input_text", "text": task]]
+        if let jpeg {
+            // Preserve the supplied UI pixels for this documented computer-use model.
+            // https://developers.openai.com/api/docs/guides/tools-computer-use
+            let detail = model == "gpt-6.1-sol" ? "original" : "low"
+            content.append(["type": "input_image", "image_url": "data:image/jpeg;base64," + jpeg.base64EncodedString(), "detail": detail])
+        }
+        var payload: [String: Any] = ["model": model, "instructions": instructions,
+            "store": false, "stream": true, "input": [["role": "user", "content": content]]]
+        // Explicitly documented support; do not infer capability from a model prefix.
+        // https://developers.openai.com/api/docs/models/gpt-6.1-sol
+        if jpeg != nil, model == "gpt-6.1-sol" {
+            payload["reasoning"] = ["effort": "low"]
+        }
+        return try JSONSerialization.data(withJSONObject: payload)
+    }
+}
+
+enum ChatGPTResponsePolicy {
+    static func acceptsEventStream(_ response: HTTPURLResponse, method: String?) -> Bool {
+        guard (200..<300).contains(response.statusCode), method == "POST",
+              response.url?.absoluteString == "https://api.openai.com/v1/responses" else { return false }
+        // Observed on the physical device: the official SSE response can lack Content-Type.
+        // A missing header may enter the parser, which still requires a complete SSE response.
+        guard let type = response.value(forHTTPHeaderField: "Content-Type") else { return true }
+        return type.lowercased().split(separator: ";", omittingEmptySubsequences: false).first?
+            .trimmingCharacters(in: .whitespacesAndNewlines) == "text/event-stream"
+    }
+}
+
 // A terminal event is mandatory. Partial model text never reaches the hardware planner.
 struct ChatGPTSSEAccumulator {
     private(set) var text = ""
     private(set) var completed = false
     private var dataLines: [String] = []
     private var bufferedBytes = 0
-    mutating func consume(line: String) throws {
+    private let requireSSEPrefix: Bool
+    private var validatedPrefix = false
+    init(requireSSEPrefix: Bool = false) { self.requireSSEPrefix = requireSSEPrefix }
+    mutating func consume(line input: String) throws {
         guard !completed else { return }
+        var line = input
+        if requireSSEPrefix && !validatedPrefix {
+            if line.hasPrefix("\u{FEFF}") { line.removeFirst() }
+            if !line.isEmpty && !line.hasPrefix(":") {
+                guard ["data:", "event:", "id:", "retry:"].contains(where: { line.hasPrefix($0) }) else {
+                    throw ChatGPTAuthError.message("ChatGPT 响应不是有效事件流。")
+                }
+                validatedPrefix = true
+            }
+        }
         if line.isEmpty {
             guard !dataLines.isEmpty else { return }
             let payload = dataLines.joined(separator: "\n")
@@ -87,11 +132,7 @@ actor ChatGPTPlanClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 15
-        var content: [[String: Any]] = [["type": "input_text", "text": task]]
-        if let jpeg { content.append(["type": "input_image", "image_url": "data:image/jpeg;base64," + jpeg.base64EncodedString(), "detail": "low"]) }
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["model": model, "instructions": instructions,
-            "store": false, "stream": true,
-            "input": [["role": "user", "content": content]]])
+        request.httpBody = try ChatGPTRequestProfile.body(model: model, instructions: instructions, task: task, jpeg: jpeg)
         let (bytes, response) = try await ChatGPTHTTP.session.bytes(for: request)
         defer { bytes.task.cancel() }
         guard let http = response as? HTTPURLResponse else { throw ChatGPTAuthError.message("ChatGPT 网络响应无效。") }
@@ -103,10 +144,35 @@ actor ChatGPTPlanClient {
             if let code = error?["code"] as? String { throw ChatGPTAuthError.message(ChatGPTSSEAccumulator.message(code: code)) }
             throw ChatGPTAuthError.message("ChatGPT 请求未获准（HTTP \(http.statusCode)），请检查账户或稍后重试。")
         }
-        guard http.value(forHTTPHeaderField: "Content-Type")?.lowercased().contains("text/event-stream") == true else {
+        guard ChatGPTResponsePolicy.acceptsEventStream(http, method: bytes.task.currentRequest?.httpMethod) else {
+#if DEBUG
+            let mime = http.mimeType?.lowercased()
+            let categories = ["application/json": "json", "text/html": "html", "text/plain": "text_plain", "application/octet-stream": "octet_stream"]
+            let category = mime.flatMap { categories[$0] } ?? (mime == nil ? "missing" : "other")
+            let rawType = http.value(forHTTPHeaderField: "Content-Type")?.lowercased().split(separator: ";").first.map(String.init)
+            let rawCategory = rawType.flatMap { categories[$0] } ?? (rawType == nil ? "missing" : "other")
+            print("[SightLatch ChatGPT] unexpected_response status=\(http.statusCode) content=\(category) header=\(rawCategory) official_url=\(http.url?.absoluteString == "https://api.openai.com/v1/responses") post=\(bytes.task.currentRequest?.httpMethod == "POST")")
+            // Only classify a bounded body. Never log headers, URLs, text, tokens or arbitrary server strings.
+            var prefix = Data()
+            for try await byte in bytes {
+                try Task.checkCancellation()
+                if prefix.count >= 16_384 { break }
+                prefix.append(byte)
+                if prefix.count == 512,
+                   let beginning = String(data: prefix, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                   beginning.hasPrefix("data:") || beginning.hasPrefix("event:") || beginning.hasPrefix("<!doctype html") || beginning.hasPrefix("<html") { break }
+            }
+            let root = (try? JSONSerialization.jsonObject(with: prefix)) as? [String: Any]
+            let text = String(data: prefix.prefix(512), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+            let shape = root != nil ? "json_object" : text.hasPrefix("data:") || text.hasPrefix("event:") ? "sse_prefix" : text.hasPrefix("<!doctype html") || text.hasPrefix("<html") ? "html_prefix" : prefix.isEmpty ? "empty" : "other"
+            let object = root?["object"] as? String == "response" ? "response" : "other"
+            let status = root?["status"] as? String
+            let state = ["completed", "failed", "incomplete", "in_progress", "queued"].contains(status ?? "") ? status! : "other"
+            print("[SightLatch ChatGPT] response_shape=\(shape) bytes=\(prefix.count) object=\(object) state=\(state) has_error=\(root?["error"] != nil) has_detail=\(root?["detail"] != nil)")
+#endif
             throw ChatGPTAuthError.message("ChatGPT 没有返回所需事件流。")
         }
-        var parser = ChatGPTSSEAccumulator()
+        var parser = ChatGPTSSEAccumulator(requireSSEPrefix: http.value(forHTTPHeaderField: "Content-Type") == nil)
         // bytes.lines can omit empty lines on some Foundation implementations. Parse bytes explicitly.
         var line = Data(); var total = 0
         for try await byte in bytes {

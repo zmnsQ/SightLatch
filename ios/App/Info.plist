@@ -8,8 +8,6 @@
 	<array><string>7D9B1E20-4F6A-4C88-A3D2-6E5F0190B7C1</string></array>
 	<key>NSAccessorySetupBluetoothNames</key>
 	<array><string>SightLatch</string></array>
-	<key>NSAccessorySetupBluetoothCompanyIdentifiers</key>
-	<array/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh_CN</string>
 	<key>CFBundleExecutable</key>
@@ -30,10 +28,16 @@
 	<string>$(PILOT_KEYCHAIN_GROUP)</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>在你选择语音输入时听写任务。文字仅填入草稿，不会自动发送或开始录屏。</string>
+	<string>听写任务，并在你开启会话语音后接收“小视”唤醒的追加命令。停止会话即停止监听。</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>将你说的任务转换为可编辑文字。语音识别可能由 Apple 服务器处理。</string>
+	<string>将语音转换为任务文字。会话唤醒仅使用设备上的语音识别；普通听写可能由 Apple 服务器处理。</string>
+	<key>UIBackgroundModes</key>
+	<array><string>audio</string></array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array><string>weixin</string></array>
 	<key>CFBundleURLTypes</key>
 	<array><dict><key>CFBundleURLName</key><string>$(PRODUCT_BUNDLE_IDENTIFIER).chat</string><key>CFBundleURLSchemes</key><array><string>sightlatch</string></array></dict></array>
 	<key>NSLocalNetworkUsageDescription</key>

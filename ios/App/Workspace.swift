@@ -48,8 +48,14 @@ struct ReadinessItem: Identifiable {
 struct RecoveryAdvice {
     let title: String
     let steps: String
-    static func classify(_ value: String) -> RecoveryAdvice {
-        let s = value.lowercased()
+    static func classify(_ value: String, verifiedAbsoluteMode: Bool = false) -> RecoveryAdvice {
+        let s = HomeStatusPresentation.runtimeDetail(value).detail.lowercased()
+        if verifiedAbsoluteMode, s.hasPrefix("ai 需要协助：") {
+            return .init(title: "当前页面需要你处理", steps: "本轮因上方原因暂停，当前提案未执行。已验证的绝对坐标映射不依赖截图中的指针。请结束本轮，核对任务目标与当前页面；需要调整页面后，再明确发送新任务。")
+        }
+        if ["模型把握不足", "模型置信度不足", "置信度不足"].contains(where: s.contains) {
+            return .init(title: "模型尚未确定下一步", steps: "本轮因模型把握不足暂停，当前提案未执行。请结束本轮，检查目标页面是否清晰、稳定；需要时再明确发送新任务。")
+        }
         if s.contains("401") || s.contains("403") || s.contains("凭据") || s.contains("keychain") {
             return .init(title: "凭据或权限不可用", steps: "停止会话，检查当前档案对应的密钥和端点。Keychain错误需确认App与扩展签名共享组；不要把密钥发到诊断日志。")
         }
@@ -60,8 +66,22 @@ struct RecoveryAdvice {
         if s.contains("arm") || s.contains("硬件") || s.contains("ble") {
             return .init(title: "硬件需要人工确认", steps: "检查BLE配对和Wi-Fi。确认目标页面安全，在App开始接管（软件模式）或按硬件ARM；必要时拔掉USB电源。会话或boot变化后重新开始，不重试旧动作。")
         }
-        if s.contains("指针") || s.contains("画面") || s.contains("截图") {
-            return .init(title: "画面与指针不可靠", steps: "回到安全目标页面，确认方向和系统指针。完成校准后重新开始。若广播截图不包含指针，当前设备无法可靠自动点选。")
+        let calibrationProblems = ["请重新自动校准", "请重新校准", "需要重新校准", "请先校准", "尚未校准", "未完成校准", "需要完成指针校准", "没有有效校准", "校准已失效", "校准失效", "校准尺度未知", "校准尺度未确认", "移动尺度未确认", "坐标映射失败", "坐标映射无效", "坐标映射未确认", "坐标映射不可靠", "坐标映射不匹配"]
+        if calibrationProblems.contains(where: s.contains) {
+            return .init(title: verifiedAbsoluteMode ? "屏幕坐标映射需要检查" : "指针校准需要检查", steps: "请结束本轮，在安全画布检查当前设备、方向和屏幕尺寸，并完成有效校准后重新准备任务。旧动作不会重放。")
+        }
+        if verifiedAbsoluteMode, ["目标超出实测绝对定位范围", "目标区域不足以容纳校准误差", "绝对目标区域无效"].contains(where: s.contains) {
+            return .init(title: "目标坐标需要检查", steps: "当前目标未通过绝对坐标检查。请结束本轮，核对目标在当前画面中的位置与实测映射范围；范围外不会外推或裁剪后点击。")
+        }
+        let missingPointer = ["未能可靠定位系统指针", "无法定位系统指针", "无法定位指针", "指针不可见", "指针不可辨认", "未定位系统指针", "未定位指针", "未检测到指针", "看不到指针", "无法看到指针", "截图不包含指针", "截图中没有指针"]
+        if missingPointer.contains(where: s.contains) {
+            if verifiedAbsoluteMode {
+                return .init(title: "当前目标需要检查", steps: "本轮使用已验证的绝对坐标映射，不要求截图中可见鼠标指针。请核对上方暂停原因与目标页面；结束本轮后，需要时再明确发送新任务。")
+            }
+            return .init(title: "尚未定位系统指针", steps: "请结束本轮，检查系统指针与广播画面。若广播截图不包含真实指针，当前流程不能可靠自动点选。")
+        }
+        if s.contains("画面") || s.contains("截图") {
+            return .init(title: "画面需要检查", steps: "请结束本轮，检查目标页面是否清晰、稳定，并核对本轮实际结果；需要时再明确发送新任务。旧动作不会重放。")
         }
         if s.contains("json") || s.contains("decode") || s.contains("格式") || s.contains("data couldn") {
             return .init(title: "模型响应不兼容", steps: "核对原生协议、完整端点、支持视觉的模型ID。兼容网关必须返回所选协议的图片和JSON结构；无效响应不会执行。")
@@ -70,10 +90,68 @@ struct RecoveryAdvice {
     }
 }
 
+/// Presentation evidence only. This neither grants an action nor changes the
+/// stored pause reason, mapping, hardware epoch or runtime safety decision.
+struct HomeStatusPresentation {
+    static func runtimeDetail(_ value: String) -> (prefix: String, detail: String) {
+        let knownPrefixes = ["暂停：", "后台会话停止：", "本轮暂停原因：", "本轮未执行动作。"]
+        var prefix = "", detail = value
+        // Strip only closed application wrappers, retaining them for rendering.
+        for _ in 0..<4 {
+            guard let marker = knownPrefixes.first(where: { detail.hasPrefix($0) }) else { break }
+            prefix += marker
+            detail = String(detail.dropFirst(marker.count))
+        }
+        return (prefix, detail)
+    }
+
+    static func usesVerifiedAbsoluteMapping(configuration: PilotConfiguration,
+                                           command: SessionCommand?, status: PilotStatus) -> Bool {
+        guard let command, !status.sessionID.isEmpty, command.id == status.sessionID,
+              configuration.hasVerifiedPointerCalibration,
+              let profile = configuration.automaticCalibrationProfile, let mapping = profile.absoluteMapping,
+              let hardware = command.execution?.hardware,
+              hardware.deviceURL == configuration.deviceURL,
+              hardware.bootID == mapping.hardwareBootID, hardware.hidGeneration == mapping.hidGeneration else { return false }
+        return true
+    }
+
+    static func detail(_ value: String, verifiedAbsoluteMode: Bool) -> String {
+        guard verifiedAbsoluteMode else { return value }
+        let parts = runtimeDetail(value)
+        // Replace only the app-generated assessment metadata, retaining the
+        // model's sanitized brief reason and the real confidence/threshold.
+        let replacements = [
+            (#"^(AI 需要协助：.*)（(置信度 [0-9]{1,3}%|置信度数值无效)，模型(?:未定位指针|报告指针可见)）(。?)$"#,
+             "$1（$2，使用已验证绝对坐标映射）$3"),
+            (#"^(模型把握不足（)(置信度 [0-9]{1,3}%|置信度数值无效)，模型(?:未定位指针|报告指针可见)(，执行门槛 85%）：.*)$"#,
+             "$1$2，使用已验证绝对坐标映射$3")
+        ]
+        for (pattern, replacement) in replacements {
+            guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(parts.detail.startIndex..., in: parts.detail)
+            if expression.firstMatch(in: parts.detail, range: range) != nil {
+                return parts.prefix + expression.stringByReplacingMatches(in: parts.detail, range: range, withTemplate: replacement)
+            }
+        }
+        return value
+    }
+}
+
 extension PilotViewModel {
     var selectedProfileName: String { workspace.profiles.first { $0.id == workspace.selectedProfileID }?.name ?? "当前配置" }
     var colorScheme: ColorScheme? { workspace.theme == "dark" ? .dark : workspace.theme == "light" ? .light : nil }
-    var recovery: RecoveryAdvice { RecoveryAdvice.classify(status.phase == "暂停" ? status.detail : notice) }
+    private var verifiedAbsolutePresentationMode: Bool {
+        HomeStatusPresentation.usesVerifiedAbsoluteMapping(configuration: configuration,
+            command: SharedStore.shared.command, status: status)
+    }
+    func presentedStatusDetail(_ value: String) -> String {
+        HomeStatusPresentation.detail(value, verifiedAbsoluteMode: verifiedAbsolutePresentationMode)
+    }
+    var recovery: RecoveryAdvice {
+        RecoveryAdvice.classify(presentedStatusDetail(status.phase == "暂停" ? status.detail : notice),
+            verifiedAbsoluteMode: verifiedAbsolutePresentationMode)
+    }
     @discardableResult
     func persistWorkspace() -> Bool {
         guard storageWarning == nil else { notice = storageWarning!; return false }
@@ -217,7 +295,12 @@ extension PilotViewModel {
             .init(id: "device", title: "设备Token", passed: deviceKeyAvailable, detail: "与固件Token一致，存于Keychain。"),
             .init(id: "network", title: "局域网与BLE", passed: deviceStatusIsFresh && lastDeviceStatus?.hid_connected == true, detail: deviceSummary),
             .init(id: "arm", title: "设备控制授权", passed: deviceStatusIsFresh && lastDeviceStatus?.armed == true, detail: "状态是最近一次检查快照，随时可能失效。"),
-            .init(id: "pointer", title: "相对指针校准", passed: configuration.relativeModeConfirmed, detail: "必须人工观察方向与当前指针，截图可见性尚需真机检查。"),
+            .init(id: "pointer", title: "屏幕坐标校准", passed: configuration.hasVerifiedPointerCalibration,
+                detail: !configuration.hasVerifiedPointerCalibration
+                    ? "尚无适用于当前设备与屏幕的有效校准。"
+                    : configuration.automaticCalibrationProfile?.absoluteMapping != nil
+                    ? "绝对坐标映射已通过实际落点测量；执行前仍会检查设备代际与屏幕尺寸。"
+                    : "当前使用旧版相对控制校准；绝对控制需要重新测量屏幕坐标。"),
             .init(id: "consent", title: "屏幕上传同意", passed: configuration.uploadConsent, detail: "将发给当前端点；进入敏感页面前停止广播。")]
     }
     func exportSettings() throws -> Data {
@@ -285,11 +368,13 @@ extension PilotViewModel {
             "has_api_credential": (try? SecretStore.load(configuration.apiAccount)) != nil,
             "has_device_credential": (try? SecretStore.load(configuration.deviceAccount)) != nil,
             "upload_consent": configuration.uploadConsent, "relative_calibrated": configuration.relativeModeConfirmed,
+            "pointer_calibration_verified": configuration.hasVerifiedPointerCalibration,
+            "absolute_mapping_present": configuration.automaticCalibrationProfile?.absoluteMapping != nil,
             "automatic_navigation": configuration.allowLowRiskNavigation,
             "last_observed_ble_connected": lastDeviceStatus?.hid_connected ?? false,
             "last_observed_armed": lastDeviceStatus?.armed ?? false,
             "recovery_category": recovery.title,
-            "build_test_status": "iOS application build/runtime not verified; consult packaged Linux verification report"]
+            "build_test_status": "This diagnostic snapshot does not certify a completed device-control task; consult the corresponding build and device-run records."]
         // Export only an already accepted, same-target, allowlisted snapshot. No refresh,
         // status request or retry occurs here; stale evidence never becomes current readiness.
         report["device_snapshot_available"] = false
