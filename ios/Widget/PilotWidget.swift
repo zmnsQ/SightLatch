@@ -23,7 +23,7 @@ struct PilotLiveActivity: Widget {
                     PilotActivityPhase(snapshot: snapshot)
                     Spacer(minLength: 8)
                     if snapshot.hasClarification && snapshot.canStop {
-                        PilotActivityStopButton()
+                        PilotActivityStopButton(compact: true)
                     } else {
                         Text("SightLatch").font(.caption2.weight(.medium)).foregroundStyle(.secondary)
                     }
@@ -51,19 +51,21 @@ struct PilotLiveActivity: Widget {
                         PilotActivityStateSymbol(snapshot: snapshot, size: 19)
                             .accessibilityHidden(true)
                         PilotActivityPhase(snapshot: snapshot)
-                    }.foregroundStyle(.white)
+                    }.foregroundStyle(.white).frame(height: 32)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    if snapshot.hasClarification && snapshot.canStop {
-                        PilotActivityStopButton().allowsHitTesting(!previewOnly)
-                    } else {
-                        PilotActivityTimeValue(snapshot: snapshot)
-                            .font(.caption.monospacedDigit()).foregroundStyle(.white.opacity(0.65))
-                    }
+                    Group {
+                        if snapshot.hasClarification && snapshot.canStop {
+                            PilotActivityStopButton(compact: true).allowsHitTesting(!previewOnly)
+                        } else {
+                            PilotActivityTimeValue(snapshot: snapshot)
+                                .font(.caption.monospacedDigit()).foregroundStyle(.white.opacity(0.65))
+                        }
+                    }.frame(height: 32)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        PilotActivityMessage(snapshot: snapshot).foregroundStyle(.white)
+                    VStack(alignment: .leading, spacing: 6) {
+                        PilotActivityMessage(snapshot: snapshot, inIsland: true).foregroundStyle(.white)
                         if snapshot.hasClarification {
                             PilotActivityChoices(snapshot: snapshot).allowsHitTesting(!previewOnly)
                         } else {
@@ -73,7 +75,7 @@ struct PilotLiveActivity: Widget {
                                 if snapshot.canStop { PilotActivityStopButton().allowsHitTesting(!previewOnly) }
                             }
                         }
-                    }.padding(.top, 3)
+                    }
                 }
             } compactLeading: {
                 PilotActivityStateSymbol(snapshot: snapshot, size: 18)
@@ -114,6 +116,10 @@ private struct PilotActivitySnapshot {
         return options
     }
     var hasClarification: Bool { !clarificationOptions.isEmpty }
+    var choicesNeedFullView: Bool {
+        let labelLimit = clarificationOptions.count == 3 ? 14 : clarificationOptions.count == 2 ? 22 : 40
+        return clarificationOptions.contains { $0.title.count > labelLimit }
+    }
     var stageTitle: String { hasClarification ? "等你选择" : staleWhileExecuting ? "等待状态更新" : stage.title }
     var symbol: String { hasClarification ? "questionmark.bubble" : staleWhileExecuting ? "clock.badge.exclamationmark" : stage.symbol }
     var compactTitle: String {
@@ -177,16 +183,22 @@ private struct PilotActivitySnapshot {
 private struct PilotActivityMessage: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let snapshot: PilotActivitySnapshot
+    var inIsland = false
     var body: some View {
-        Text(snapshot.actionSummary)
-            .font(.subheadline.weight(snapshot.stage.needsAttention ? .medium : .regular))
-            .lineLimit(snapshot.hasClarification ? 3 : 2).fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .privacySensitive(snapshot.hasClarification || snapshot.stage.needsAttention)
-            .id(snapshot.actionSummary)
-            .transition(.opacity)
-            .animation(reduceMotion || isLuminanceReduced ? nil : .easeInOut(duration: 0.22), value: snapshot.actionSummary)
+        // The fixed system surface cannot hold a large-type question and all
+        // choices. Its explicit App link below provides the complete content.
+        if !snapshot.hasClarification || !dynamicTypeSize.isAccessibilitySize {
+            Text(snapshot.actionSummary)
+                .font((inIsland ? Font.caption : .subheadline).weight(snapshot.stage.needsAttention ? .medium : .regular))
+                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .privacySensitive(snapshot.hasClarification || snapshot.stage.needsAttention)
+                .id(snapshot.actionSummary)
+                .transition(.opacity)
+                .animation(reduceMotion || isLuminanceReduced ? nil : .easeInOut(duration: 0.22), value: snapshot.actionSummary)
+        }
     }
 }
 
@@ -196,24 +208,45 @@ private struct PilotActivityChoices: View {
     let snapshot: PilotActivitySnapshot
     var body: some View {
         if let questionID = snapshot.state.clarificationID, snapshot.hasClarification {
-            let layout = dynamicTypeSize.isAccessibilitySize
-                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
-                : AnyLayout(HStackLayout(spacing: 8))
-            layout {
-                ForEach(snapshot.clarificationOptions) { option in
-                    Button(intent: AnswerPilotClarificationIntent(sessionID: snapshot.attributes.sessionID,
-                        questionID: questionID, optionID: option.id)) {
-                        Text(option.title).font(.caption.weight(.semibold))
-                            .lineLimit(3).fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                            .contentShape(Rectangle())
-                            .privacySensitive()
+            if dynamicTypeSize.isAccessibilitySize || snapshot.choicesNeedFullView {
+                Link(destination: URL(string: "sightlatch://chat")!) {
+                    Label("在 App 回答", systemImage: "arrow.up.forward")
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                        .modifier(PilotActivityChoiceSurface())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("在 App 查看完整问题和选项")
+            } else {
+                HStack(spacing: 8) {
+                    ForEach(snapshot.clarificationOptions) { option in
+                        Button(intent: AnswerPilotClarificationIntent(sessionID: snapshot.attributes.sessionID,
+                            questionID: questionID, optionID: option.id)) {
+                            Text(option.title).font(.caption.weight(.semibold))
+                                .multilineTextAlignment(.center).lineLimit(2)
+                                .modifier(PilotActivityChoiceSurface())
+                                .privacySensitive()
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("回答当前问题，再读取新画面继续")
                     }
-                    .buttonStyle(.bordered).tint(.blue)
-                    .accessibilityHint("回答当前问题，再读取新画面继续")
                 }
             }
         }
+    }
+}
+
+/// Forty-four points is the entire button, including its background. Native
+/// bordered padding must not silently add height inside the constrained island.
+private struct PilotActivityChoiceSurface: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity)
+            .frame(height: 44)
+            .foregroundStyle(.blue)
+            .background(Color.blue.opacity(0.17), in: RoundedRectangle(cornerRadius: 11))
+            .contentShape(RoundedRectangle(cornerRadius: 11))
     }
 }
 
@@ -276,11 +309,12 @@ private struct PilotActivitySteps: View {
 }
 
 private struct PilotActivityStopButton: View {
+    var compact = false
     var body: some View {
         Button(intent: StopPilotSessionIntent()) {
             Label("停止", systemImage: "stop.fill")
                 .font(.caption.weight(.medium))
-                .frame(minWidth: 54, minHeight: 44)
+                .frame(minWidth: 54, minHeight: compact ? 32 : 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain).tint(.red).foregroundStyle(.red)
