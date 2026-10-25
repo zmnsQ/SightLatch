@@ -274,7 +274,21 @@ final class ContinuedSession {
                         cancellationReason = Self.sessionAuthorizationFailure(command: activeCommand, expectedStopGeneration: expectedStopGeneration)
                         throw CancellationError()
                     }
+                    if current.generation != activeCommand.generation,
+                       let answer = current.lastClarificationAnswer {
+                        agent.manualResume(at: answer.answeredAt)
+                        agent.record(action: "user_answer", outcome: answer.reply,
+                                     at: answer.answeredAt, countsAsUIAttempt: false)
+                        lastProgressAt = Date()
+                    }
                     activeCommand = current
+                    try requireSession(current)
+                    if current.pendingClarification != nil {
+                        // Capture and lease renewal continue without consuming AI rounds.
+                        lastProgressAt = Date()
+                        try await Task.sleep(nanoseconds: 250_000_000)
+                        continue
+                    }
                     if let updated = try store.applyPendingGoal(sessionID: command.id, expectedGeneration: current.generation) {
                         current = updated
                         activeCommand = updated
@@ -363,6 +377,14 @@ final class ContinuedSession {
                             throw error
                         }
                     }
+                    if proposal.type == .ask_user {
+                        try requireSession(command)
+                        if let limit = agent.limitReason() { throw PilotError.message(limit) }
+                        _ = try store.requestClarification(proposal: proposal, sessionID: command.id,
+                            generation: command.generation, frameID: frame.id,
+                            expectedStopGeneration: expectedStopGeneration)
+                        continue
+                    }
                     if let reason = SafetyGate.rejection(proposal, task: command.task, config: configuration,
                         command: latest, frameID: frame.id, capturedAt: frame.capturedAt, capturedUptime: frame.capturedUptime, absoluteContext: absoluteContext) {
                         store.log("AI提案诊断 \(proposal.rejectionDiagnostic(frameAge: Date().timeIntervalSince(frame.capturedAt))) \(frame.geometry?.diagnosticDimensions ?? "geometry=unknown")", sessionID: command.id)
@@ -420,6 +442,7 @@ final class ContinuedSession {
                                 return false
                             }
                             guard let latest = store.command, latest.id == command.id, latest.running,
+                                  latest.pendingClarification == nil,
                                   latest.generation == command.generation, store.configuration.uploadConsent,
                                   let lease = store.read("lease.json", as: ExecutionLease.self), lease.sessionID == command.id, lease.expiresAt > Date() else { return false }
                             if let scope = latest.messageScope {

@@ -203,8 +203,12 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
             work?.cancel()
             // A new generation never replays the prior proposal. The next frame must be newly captured.
             paused = false
-            if goalReplaced { agent?.replaceGoal() } else { agent?.manualResume() }
-            hardwareSession = ""
+            if goalReplaced { agent?.replaceGoal() }
+            else if let answer = command.lastClarificationAnswer {
+                agent?.manualResume(at: answer.answeredAt)
+                agent?.record(action: "user_answer", outcome: answer.reply,
+                              at: answer.answeredAt, countsAsUIAttempt: false)
+            } else { agent?.manualResume() }
             lastCapture = Date()
             publish("观察", "任务指令已更新，等待新画面重新判断")
         }
@@ -279,6 +283,9 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
             // Real frames remain observable while first ARM is pending. No AI,
             // app launch, continued scheduler or input can use this pending phase.
             guard self.store.command?.authorizationIsCurrent(requireActive: true) == true else { return }
+            // Keep fresh capture observations and the existing hardware lease alive
+            // while waiting. A question schedules neither inference nor input.
+            guard self.store.command?.pendingClarification == nil else { return }
             if let current = self.store.command, let scope = current.messageScope {
                 // The continued-processing owner may have committed a voice goal
                 // since this callback began. Drop the old frame until pollControl syncs it.
@@ -356,6 +363,7 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
                 let deadline = capturedAt.addingTimeInterval(min(20, max(3, configuration.maxFrameAge)))
                 let isSessionAuthorized = { () -> Bool in
                     guard let current = self.store.command, current.id == command.id, current.running,
+                          current.pendingClarification == nil,
                           current.generation == capturedGeneration, current.task == command.task,
                           current.messageScope?.id == command.messageScope?.id,
                           current.continuedExecution == nil, self.store.configuration.uploadConsent,
@@ -414,6 +422,18 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
                     }
                     if let reason = self.queue.sync(execute: { self.frameObservationFailure(comparedTo: decisionFingerprint, deadline: deadline, geometry: pointerGeometry) }) {
                         throw BroadcastFrameObservationFailure(reason: "模型返回后：" + reason)
+                    }
+                    if proposal.type == .ask_user {
+                        guard isSessionAuthorized() else { throw CancellationError() }
+                        if let limit = self.queue.sync(execute: { self.agent?.limitReason() }) {
+                            throw PilotError.message(limit)
+                        }
+                        _ = try self.store.requestClarification(proposal: proposal, sessionID: command.id,
+                            generation: capturedGeneration, frameID: frameID,
+                            expectedStopGeneration: capturedStopGeneration)
+                        // The store publishes the question atomically with its pending state.
+                        // Do not pause capture or issue STOP for a user decision.
+                        return
                     }
                     if let reason = SafetyGate.rejection(proposal, task: command.task, config: configuration, command: latest, frameID: frameID, capturedAt: capturedAt, capturedUptime: receivedUptime, absoluteContext: absoluteContext) {
                         self.store.log("AI提案诊断 \(proposal.rejectionDiagnostic(frameAge: Date().timeIntervalSince(capturedAt))) \(geometry.diagnosticDimensions)", sessionID: command.id)

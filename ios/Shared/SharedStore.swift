@@ -448,6 +448,78 @@ final class SharedStore {
         }
         return updated && failed
     }
+    /// Only the active executor may stage a question after discarding its
+    /// proposal, before any side-effecting request. This never changes ARM.
+    func requestClarification(proposal: ActionProposal, sessionID: String, generation: Int,
+                              frameID: String, expectedStopGeneration: String?) throws -> SessionClarification {
+        try queue.sync { try withFileLock {
+            guard let directory else { throw PilotError.message("App Group 不可用") }
+            var command = try JSONDecoder().decode(SessionCommand.self,
+                from: Data(contentsOf: directory.appendingPathComponent("command.json")))
+            guard command.id == sessionID, command.generation == generation else {
+                throw PilotError.message("提问所属会话已变化；不会替换当前任务。")
+            }
+            try requireConfirmedClarificationControlUnlocked(command)
+            let pending = try SessionClarificationPolicy.make(proposal: proposal, command: command,
+                frameID: frameID, expectedStopGeneration: expectedStopGeneration,
+                actualStopGeneration: clarificationFenceUnlocked(), uploadConsent: currentUploadConsentUnlocked())
+            command.pendingClarification = pending
+            try writeUnlocked(command, to: "command.json")
+            // The command is authoritative if a secondary status write fails.
+            // Readers can still derive the waiting UI from pendingClarification.
+            try? writeClarificationStatusUnlocked(sessionID: sessionID, phase: "等待用户",
+                detail: pending.question, userMessage: pending.question)
+            return pending
+        } }
+    }
+    /// App and Live Activity answers compete for the same persisted question.
+    /// The winning answer bumps the generation once, retaining every attempt
+    /// ledger, execution timestamp and hardware identity from the old command.
+    func resolveClarification(sessionID: String, questionID: String, optionID: String) throws -> SessionCommand {
+        try queue.sync { try withFileLock {
+            guard let directory else { throw PilotError.message("App Group 不可用") }
+            let command = try JSONDecoder().decode(SessionCommand.self,
+                from: Data(contentsOf: directory.appendingPathComponent("command.json")))
+            try requireConfirmedClarificationControlUnlocked(command)
+            let resolved = try SessionClarificationPolicy.resolving(command: command, sessionID: sessionID,
+                questionID: questionID, optionID: optionID, actualStopGeneration: clarificationFenceUnlocked(),
+                uploadConsent: currentUploadConsentUnlocked())
+            try writeUnlocked(resolved, to: "command.json")
+            try? writeClarificationStatusUnlocked(sessionID: sessionID, phase: "观察",
+                detail: "已收到选择，正在查看新画面", userMessage: nil)
+            return resolved
+        } }
+    }
+    private func writeClarificationStatusUnlocked(sessionID: String, phase: String,
+                                                  detail: String, userMessage: String?) throws {
+        guard let directory else { return }
+        let url = directory.appendingPathComponent("status.json")
+        let previous = FileManager.default.fileExists(atPath: url.path)
+            ? try JSONDecoder().decode(PilotStatus.self, from: Data(contentsOf: url)) : nil
+        guard previous == nil || previous?.sessionID == sessionID else { return }
+        try writeUnlocked(PilotStatus(phase: phase, detail: detail, steps: previous?.steps ?? 0,
+            sessionID: sessionID, userMessage: userMessage), to: "status.json")
+    }
+    private func clarificationFenceUnlocked() throws -> String? {
+        guard let directory else { throw PilotError.message("App Group 不可用") }
+        let url = directory.appendingPathComponent("stop-generation.json")
+        return FileManager.default.fileExists(atPath: url.path)
+            ? try JSONDecoder().decode(String.self, from: Data(contentsOf: url)) : nil
+    }
+    private func requireConfirmedClarificationControlUnlocked(_ command: SessionCommand) throws {
+        if let directory {
+            let status = (try? Data(contentsOf: directory.appendingPathComponent("status.json")))
+                .flatMap { try? JSONDecoder().decode(PilotStatus.self, from: $0) }
+            guard status?.sessionID != command.id || status?.phase != "请核实硬件停止" else {
+                throw PilotError.message("设备停止尚未确认，不能通过回答恢复执行。")
+            }
+        }
+        let uncertain = try uncertainHardwareRecordsUnlocked()
+        guard !uncertain.contains(where: { record in
+            record.sessionID == command.id || record.bootID == command.execution?.hardware.bootID ||
+                (record.bootID == "unknown" && record.deviceURL == command.execution?.hardware.deviceURL)
+        }) else { throw PilotError.message("设备操作结果不明，不能通过回答恢复执行。") }
+    }
     /// Last local instruction wins within one still-active generation. The
     /// runtime, not the speech callback, commits it after its hardware receipt.
     func enqueueGoalInstruction(_ instruction: SessionGoalInstruction) throws {
@@ -460,7 +532,7 @@ final class SharedStore {
                 ? try JSONDecoder().decode(String.self, from: Data(contentsOf: fenceURL)) : nil
             let now = Date()
             let goal = instruction.goal.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard currentUploadConsentUnlocked(), command.running,
+            guard currentUploadConsentUnlocked(), command.running, command.pendingClarification == nil,
                   command.id == instruction.sessionID, command.generation == instruction.generation,
                   fence == instruction.expectedStopGeneration,
                   command.authorizationIsCurrent(now: now),
@@ -486,7 +558,8 @@ final class SharedStore {
             guard FileManager.default.fileExists(atPath: commandURL.path) else { return nil }
             var command = try JSONDecoder().decode(SessionCommand.self, from: Data(contentsOf: commandURL))
             // A stale runtime cannot delete a newer session's queued instruction.
-            guard command.id == sessionID, command.generation == expectedGeneration else { return nil }
+            guard command.id == sessionID, command.generation == expectedGeneration,
+                  command.pendingClarification == nil else { return nil }
             let fenceURL = directory.appendingPathComponent("stop-generation.json")
             let fence = FileManager.default.fileExists(atPath: fenceURL.path)
                 ? try JSONDecoder().decode(String.self, from: Data(contentsOf: fenceURL)) : nil
@@ -538,6 +611,7 @@ final class SharedStore {
     func beginMessageLaunch(context: MessageDispatchContext, expectedStopGeneration: String?, firstFrame: CaptureObservation) throws {
         let updated = try updateCommand(sessionID: context.sessionID, expectedStopGeneration: expectedStopGeneration, enforceStopGeneration: true) { command in
             guard currentUploadConsentUnlocked(), command.authorizationIsCurrent(requireActive: true), command.generation == context.generation,
+                  command.pendingClarification == nil,
                   var scope = command.messageScope, scope.id == context.scopeID,
                   scope.stopGeneration == expectedStopGeneration,
                   scope.matches(sessionID: command.id, generation: command.generation, task: command.task),
@@ -650,7 +724,7 @@ final class SharedStore {
     func reserveMessageAction(purpose: String, context: MessageDispatchContext) throws {
         let expectedStopGeneration = command?.messageScope?.stopGeneration
         let updated = try updateCommand(sessionID: context.sessionID, expectedStopGeneration: expectedStopGeneration, enforceStopGeneration: true) { command in
-            guard command.running, command.generation == context.generation,
+            guard command.running, command.generation == context.generation, command.pendingClarification == nil,
                   var scope = command.messageScope, scope.launch.isVisuallyEstablished,
                   purpose != "message_paste" || scope.clipboardIsReady,
                   scope.reserve(purpose: purpose, context: context, task: command.task) else {
@@ -662,7 +736,7 @@ final class SharedStore {
     }
     func verifyMessage(context: MessageDispatchContext, capturedAt: Date) throws {
         let updated = try updateCommand(sessionID: context.sessionID) { command in
-            guard command.running, command.generation == context.generation,
+            guard command.running, command.generation == context.generation, command.pendingClarification == nil,
                   var scope = command.messageScope, scope.id == context.scopeID,
                   scope.matches(sessionID: command.id, generation: command.generation, task: command.task),
                   scope.sendAttempted, !scope.verified, scope.sendFrameID != context.frameID,

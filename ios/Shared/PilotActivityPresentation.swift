@@ -25,7 +25,7 @@ enum PilotActivityStage: String {
         case .observing: return "查看屏幕"
         case .planning: return "规划下一步"
         case .executing: return "执行操作"
-        case .needsInput: return "需要你处理"
+        case .needsInput: return "需要你看一下"
         case .failed: return "请检查会话"
         case .completed: return "任务已结束"
         case .stopped: return "自动操作已停止"
@@ -39,7 +39,7 @@ enum PilotActivityStage: String {
         case .observing: return "eye"
         case .planning: return "sparkles"
         case .executing: return "cursorarrow.motionlines"
-        case .needsInput: return "hand.raised.fill"
+        case .needsInput: return "bubble.left.and.bubble.right.fill"
         case .failed: return "exclamationmark.triangle.fill"
         case .completed: return "checkmark.circle.fill"
         case .stopped: return "stop.circle.fill"
@@ -234,7 +234,8 @@ actor PilotActivityPublisher {
 
     static func state(_ status: PilotStatus, command: SessionCommand?, running: Bool) -> PilotActivityAttributes.ContentState {
         let command = command?.id == status.sessionID ? command : nil
-        let sourcePhase = !running && [.ready, .starting, .observing, .planning, .executing].contains(PilotActivityStage(phase: status.phase)) ? "停止" : status.phase
+        let sourcePhase = running && command?.pendingClarification != nil ? "等待用户" :
+            (!running && [.ready, .starting, .observing, .planning, .executing].contains(PilotActivityStage(phase: status.phase)) ? "停止" : status.phase)
         let phase = PilotActivitySummary.presentationPhase(sourcePhase,
             awaitingCapture: running && command?.execution?.phase == .awaitingCapture,
             startingHardware: running && command?.execution?.phase == .startingHardware,
@@ -250,7 +251,9 @@ actor PilotActivityPublisher {
             isUnlimited: active && command?.execution?.isUnlimited == true && start != nil && end == nil,
             eventID: "\(status.updatedAt.timeIntervalSince1970):\(status.steps):\(PilotActivityStage(phase: phase).rawValue)",
             noticeCode: notice?.rawValue, running: running,
-            noticeMessage: PilotActivityStage(phase: phase).needsAttention ? PilotActivitySummary.userMessage(status.userMessage) : nil)
+            noticeMessage: PilotActivityStage(phase: phase).needsAttention ? PilotActivitySummary.userMessage(command?.pendingClarification?.question ?? status.userMessage) : nil,
+            clarificationID: running ? command?.pendingClarification?.id : nil,
+            clarificationOptions: running ? command?.pendingClarification?.options.map { PilotClarificationAction(id: $0.id, title: $0.title) } : nil)
     }
 
     /// Called only after the hardware client's verified STOP receipt, never from
@@ -292,7 +295,7 @@ actor PilotActivityPublisher {
         guard !activities.isEmpty else { try? store.write(diagnostic, to: "activity-publication-\(diagnostic.source).json"); return }
         var alert: AlertConfiguration?
         if stage.needsAttention, let notice = state.noticeCode.flatMap(PilotActivityNotice.init(rawValue:)) {
-            let key = "\(command?.generation ?? 0):\(stage.rawValue):\(state.steps):\(notice.rawValue)"
+            let key = state.clarificationID ?? "\(command?.generation ?? 0):\(stage.rawValue):\(state.steps):\(notice.rawValue)"
             if store.claimActivityAlert(sessionID: status.sessionID, key: key) {
                 alert = AlertConfiguration(title: LocalizedStringResource(stringLiteral: notice.alertTitle),
                     body: LocalizedStringResource(stringLiteral: state.noticeMessage ?? notice.text), sound: .default)

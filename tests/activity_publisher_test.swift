@@ -11,7 +11,9 @@ struct SessionCommand {
         enum Phase { case awaitingCapture, startingHardware, active }
         var phase: Phase; var startedAt: Date?; var expiresAt: Date?; var isUnlimited = false
     }
+    struct Question { var id: String; var question: String; var options: [PilotClarificationAction] }
     var id: String; var generation = 0; var running = true; var execution: Execution?
+    var pendingClarification: Question? = nil
     var executionStartedAt: Date? { execution?.startedAt }
 }
 struct LocalizedStringResource: ExpressibleByStringLiteral {
@@ -101,6 +103,20 @@ struct PublisherTests {
         precondition(restored.alerts.count == 1, "No extension match must not consume the essential alert claim")
         let unlimited = PilotActivityPublisher.state(PilotStatus(phase: "观察", detail: "", steps: 1, sessionID: "extension"), command: store.command, running: true)
         precondition(unlimited.isUnlimited == true && unlimited.executionStartedAt == start && unlimited.executionExpiresAt == nil)
+        store.command!.pendingClarification = .init(id: "question-1", question: "选择当前聊天吗？", options: [.init(id: "answer-1", title: "使用当前聊天")])
+        let questionStatus = PilotStatus(phase: "观察", detail: "旧状态", steps: 2, updatedAt: start.addingTimeInterval(2), sessionID: "extension")
+        await publisher.publish(questionStatus)
+        precondition(restored.updates.last!.state.phase == "等待用户", "Persisted question wins over a lagging status write")
+        precondition(restored.updates.last!.state.clarificationOptions?.first?.id == "answer-1")
+        precondition(restored.alerts.count == 2)
+        await publisher.publish(questionStatus)
+        precondition(restored.alerts.count == 2, "A question alerts once")
+        store.command!.pendingClarification!.id = "question-2"
+        await publisher.publish(questionStatus)
+        precondition(restored.alerts.count == 3, "A new question at the same step must alert again")
+        let stoppedQuestion = PilotActivityPublisher.state(questionStatus, command: store.command, running: false)
+        precondition(stoppedQuestion.clarificationID == nil && stoppedQuestion.clarificationOptions == nil)
+        store.command!.pendingClarification = nil
         store.command!.execution!.phase = .awaitingCapture
         let preparing = PilotActivityPublisher.state(PilotStatus(phase: "观察", detail: "", steps: 0, sessionID: "extension"), command: store.command, running: true)
         precondition(preparing.phase == "待广播" && preparing.executionStartedAt == nil && preparing.executionExpiresAt == nil && preparing.isUnlimited == false)
@@ -111,7 +127,7 @@ struct PublisherTests {
         store.status = PilotStatus(phase: "完成", detail: "", steps: 1, updatedAt: start.addingTimeInterval(10), sessionID: "extension")
         await publisher.finishAfterHardwareStop(sessionID: "extension")
         precondition(restored.ends == 1 && restored.updates.last!.state.phase == "完成")
-        precondition(restored.alerts.count == 2, "Completion alert is requested before the verified terminal activity ends")
+        precondition(restored.alerts.count == 4, "Completion alert is requested before the verified terminal activity ends")
         print("PASS: actual activity publisher phase delivery, duplicate/alert dedup, explicit redacted AI message, revoked authority, zero-match diagnostics, finite/unlimited preparation clocks")
     }
 }

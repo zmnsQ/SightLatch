@@ -11,9 +11,17 @@ import Foundation
         }
         precondition(state(nil) == .ready)
         precondition(state(frame) == .capturing)
+        command.pendingClarification = .init(question: "选择当前聊天吗？", options: [.init(title: "继续观察", reply: "重新查看")],
+            createdAt: Date(), sessionID: command.id, generation: command.generation, frameID: "q-frame", scopeID: nil, stopGeneration: nil)
+        status.phase = "等待用户"
+        precondition(state(frame) == .awaitingAnswer, "A pending question retains capture without claiming the AI is executing")
+        command.running = false
+        precondition(state(frame) == .ended, "A stale question cannot advertise resumable control")
+        command.running = true
+        command.pendingClarification = nil
         status.phase = "暂停"
         precondition(state(frame) == .paused, "A fresh frame cannot hide the runtime pause")
-        precondition(state(frame).detail.contains("不会自动继续"))
+        precondition(state(frame).detail == "查看原因后结束本轮任务。")
         status.phase = "观察"
         frame.state = "paused"
         precondition(state(frame) == .paused, "Capture pause must be visible before status polling catches up")
@@ -33,7 +41,7 @@ import Foundation
         command.running = false; status.phase = "暂停"
         precondition(state(frame) == .ended, "A revoked attempt is ended, not waiting to resume")
         let activity = ActivityPresentationUnderTest.presentationStatus(status, running: false)
-        precondition(activity.phase == "停止" && activity.steps == status.steps && activity.updatedAt == status.updatedAt)
+        precondition(activity.phase == "暂停" && activity.steps == status.steps && activity.updatedAt == status.updatedAt)
         precondition(status.phase == "暂停" && activity.detail == status.detail, "Presentation must not overwrite the App's original cause")
         precondition(ActivityPresentationUnderTest.presentationStatus(status, running: true).phase == "暂停")
         status.phase = "完成"

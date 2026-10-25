@@ -78,6 +78,17 @@ final class PilotViewModel: ObservableObject {
         }
         ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect().sink { [weak self] _ in self?.refresh() }
     }
+    func answerClarification(questionID: String, optionID: String) async {
+        guard let command = SharedStore.shared.command, command.running, !stopping else { return }
+        do {
+            _ = try SharedStore.shared.resolveClarification(sessionID: command.id,
+                questionID: questionID, optionID: optionID)
+            notice = ""
+            refresh()
+            await PilotActivityPublisher.shared.publish(SharedStore.shared.status)
+        } catch { notice = error.localizedDescription }
+    }
+
     func refresh() {
         if configuration.automaticCalibrationProfile != nil,
            configuration.hasVerifiedPointerCalibration || SharedStore.shared.command?.running == true {
@@ -103,6 +114,12 @@ final class PilotViewModel: ObservableObject {
             Task { await refreshDeviceStatus() }
         }
         status = SharedStore.shared.status
+        if let command = SharedStore.shared.command, command.running,
+           status.sessionID == command.id, let question = command.pendingClarification {
+            status.phase = "等待用户"
+            status.detail = question.question
+            status.userMessage = question.question
+        }
         if let command = SharedStore.shared.command, command.running,
            taskFlow.sessionID == command.id, command.task != task {
             task = command.task

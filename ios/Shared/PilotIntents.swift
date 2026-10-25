@@ -2,6 +2,29 @@ import AppIntents
 import ActivityKit
 import Foundation
 
+struct AnswerPilotClarificationIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "回答 SightLatch"
+    static var description = IntentDescription("回答当前问题，随后读取新画面继续当前任务。")
+    static var openAppWhenRun = false
+    static var authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
+
+    @Parameter(title: "会话") var sessionID: String
+    @Parameter(title: "问题") var questionID: String
+    @Parameter(title: "选项") var optionID: String
+    init() {}
+    init(sessionID: String, questionID: String, optionID: String) {
+        self.sessionID = sessionID
+        self.questionID = questionID
+        self.optionID = optionID
+    }
+    func perform() async throws -> some IntentResult {
+        let store = SharedStore.shared
+        _ = try store.resolveClarification(sessionID: sessionID, questionID: questionID, optionID: optionID)
+        await PilotActivityPublisher.shared.publish(store.status)
+        return .result()
+    }
+}
+
 // Included in App and Widget targets. LiveActivityIntent asks the system to run perform in the App process.
 // Never call perform directly from ReplayKit to pretend that it wakes the main App.
 struct RefreshPilotStatusIntent: LiveActivityIntent {

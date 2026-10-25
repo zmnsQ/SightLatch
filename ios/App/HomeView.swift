@@ -374,6 +374,24 @@ struct HomeView: View {
                 Label(caution, systemImage: "exclamationmark.circle")
                     .font(.subheadline).foregroundStyle(.orange)
             }
+            if let command = SharedStore.shared.command, command.running,
+               let question = command.pendingClarification {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(question.options) { option in
+                        Button {
+                            Task { await model.answerClarification(questionID: question.id, optionID: option.id) }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Text(option.title).multilineTextAlignment(.leading)
+                                Spacer(minLength: 8)
+                                Image(systemName: "arrow.right").font(.caption.weight(.semibold))
+                            }.frame(minHeight: 28)
+                        }.pilotAction(prominent: false)
+                            .disabled(model.stopping)
+                            .accessibilityIdentifier("chat.answer.\(option.id)")
+                    }
+                }.padding(.vertical, 8)
+            }
             if model.status.phase == "暂停", SharedStore.shared.command?.running == true {
                 Button("结束任务", systemImage: "stop.fill") {
                     Task { await model.endPausedSession() }
@@ -618,6 +636,7 @@ struct PilotTaskResultPresentation {
     }
     var title: String {
         if stopUnconfirmed { return "请停止设备" }
+        if phase == "等待用户" { return "等你选择" }
         if phase == "暂停" { return "需要你看一下" }
         if phase == "完成" && messageVerified { return "已完成" }
         if sendAttempted && !messageVerified { return active ? "正在核对发送结果" : "发送结果待核对" }
@@ -634,6 +653,7 @@ struct PilotTaskResultPresentation {
     }
     var subtitle: String {
         if stopUnconfirmed { return "请断开设备电源，确保操作停止。" }
+        if phase == "等待用户" { return "选择后，我会接着完成当前任务。" }
         if phase == "完成" && messageVerified { return "已在聊天画面中确认消息。" }
         if phase == "暂停" || phase == "停止" {
             if sendAttempted && !messageVerified { return "发送结果尚未确认，请查看目标聊天。" }
@@ -1131,7 +1151,7 @@ struct DevicePairingResultView: View {
 
 /// Presentation only: this never resumes capture, creates a command, or grants control.
 enum HomeCaptureState: Equatable {
-    case idle, preparing, ready, waiting, capturing, interrupted, paused, ended
+    case idle, preparing, ready, waiting, capturing, awaitingAnswer, interrupted, paused, ended
 
     static func currentObservation(_ observation: CaptureObservation?, command: SessionCommand?) -> CaptureObservation? {
         guard let observation, let command, observation.sessionID == command.id,
@@ -1149,6 +1169,7 @@ enum HomeCaptureState: Equatable {
         }
         if sameStatus && status.phase == "暂停" || current?.state == "paused" { return .paused }
         if sameStatus && ["停止", "完成"].contains(status.phase) { return .ended }
+        if command?.pendingClarification != nil { return .awaitingAnswer }
         guard prepared else { return .preparing }
         guard let current else { return .ready }
         if current.hasFreshFrame { return .capturing }
@@ -1162,6 +1183,7 @@ enum HomeCaptureState: Equatable {
         case .ready: return "开始广播"
         case .waiting: return "正在连接画面"
         case .capturing: return "正在共享屏幕"
+        case .awaitingAnswer: return "等待你的选择"
         case .interrupted: return "画面更新已中断"
         case .paused: return "会话已暂停"
         case .ended: return "已结束"
@@ -1174,6 +1196,7 @@ enum HomeCaptureState: Equatable {
         case .ready: return "在系统窗口中开始直播。"
         case .waiting: return "画面连接后自动开始。"
         case .capturing: return "AI 正在帮你操作。"
+        case .awaitingAnswer: return "屏幕共享继续，选择后接着执行。"
         case .interrupted: return "请检查屏幕共享是否仍在运行。"
         case .paused: return "查看原因后结束本轮任务。"
         case .ended: return "可以开始新的任务。"

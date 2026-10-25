@@ -619,11 +619,13 @@ final class SessionVoiceController: NSObject, ObservableObject {
         case "待广播": phrase = "准备好了，请确认系统屏幕广播。"
         case "规划": phrase = "我在看画面，判断下一步。"
         case "执行": phrase = "正在执行第\(status.steps + 1)步。"
+        case "等待用户": phrase = "有个问题需要你选择，请查看实时活动。"
         case "暂停", "需确认", "等待确认": phrase = "任务已暂停，请回到小视查看。"
         default: return
         }
         // Repeated polling and observe/plan transitions at the same step stay silent.
-        let key = status.phase == "规划" ? "planning" : "\(status.phase):\(status.steps)"
+        let key = command.pendingClarification.map { "question:\($0.id)" }
+            ?? (status.phase == "规划" ? "planning" : "\(status.phase):\(status.steps)")
         announce(phrase, key: key)
     }
 

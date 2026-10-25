@@ -106,6 +106,18 @@ import Foundation
             try progress.observe(frameID: "after-change4", capturedAt: start.addingTimeInterval(18), fingerprint: changed, now: start)
             preconditionFailure("Real visual change starts a new four-attempt stall window")
         } catch is HarnessError {}
+        var clarification = AgentSession(id: "question", startedAt: start, maxRounds: 8, durationSeconds: 90)
+        try clarification.observe(frameID: "question-frame", capturedAt: start, fingerprint: image, now: start)
+        clarification.record(action: "message_send", outcome: "hardware_completed; verify only", at: start.addingTimeInterval(1))
+        let answerAt = start.addingTimeInterval(20)
+        let priorRounds = clarification.rounds
+        clarification.manualResume(at: answerAt)
+        clarification.record(action: "user_answer", outcome: "重新观察", at: answerAt, countsAsUIAttempt: false)
+        precondition(!clarification.accepts(frameID: "old", capturedAt: answerAt))
+        precondition(!clarification.accepts(frameID: "old2", capturedAt: answerAt.addingTimeInterval(-1)))
+        precondition(clarification.accepts(frameID: "new", capturedAt: answerAt.addingTimeInterval(1)))
+        precondition(clarification.rounds == priorRounds && clarification.modelContext.contains("message_send"))
+        precondition(clarification.limitReason(now: start.addingTimeInterval(90)) != nil)
         print("PASS: fresh post-tool frames, precise UI-attempt stall counting, launch/non-dispatch exclusions without resets, bounded recovery/history, real-change reset and unchanged round/time limits")
     }
 }
