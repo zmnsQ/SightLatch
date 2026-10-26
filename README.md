@@ -62,6 +62,7 @@ The Xcode project, shared scheme, targets and products are named **SightLatch**.
 
 - [Stateful agent loop](docs/AGENT_LOOP.md)
 - [Siri, voice input and Live Activities](docs/SIRI_SHORTCUTS_LIVE_ACTIVITIES.md)
+- [Fish Audio voice feedback](docs/FISH_AUDIO.zh-CN.md)
 - [Experimental official ChatGPT plan login](docs/CHATGPT_PLAN_LOGIN.zh-CN.md)
 - [C3 browser flashing](docs/ESP32_C3_SETUP.zh-CN.md); a live installer URL requires successful Pages deployment
 

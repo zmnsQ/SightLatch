@@ -10,7 +10,9 @@
 任务文本只进入草稿，不发送、不准备硬件、不运行模型。用户确认聊天任务、连接/校准、屏幕上传同意、硬件 ARM，以及系统广播确认仍保留。已有会话进行中不会替换当前任务。短语可把进入聊天/听写压缩为一次调用，不能把跨 App 系统录屏授权压缩成静默自动启动。
 
 ## 系统边界
-Apple 的 RPSystemBroadcastPickerView 由用户点击后显示系统广播选择器。实现没有遍历内部按钮、模拟点击或私有 API，不绕过系统广播确认。没有无限后台语音模式，也没有新增后台音频 entitlement。
+新任务准备好后，App 自动显示屏幕共享弹窗；用户点击其中的 RPSystemBroadcastPickerView 后，由系统确认开始直播。关闭引导只收起 App 弹窗，可从聊天重新打开；收到首帧后自动收起引导，并保持 ReplayKit 宿主挂载。实现没有遍历内部按钮、模拟点击或私有 API，不绕过系统广播确认。
+
+会话语音随任务生命周期停止，后台收音仍受 iOS 音频会话、中断和运行权限限制。「进度播报」独立控制输出，关闭后不再自动说话；显式试听不改变开关。可选择 iPhone 本地声音或 [Fish Audio 云端音色](FISH_AUDIO.zh-CN.md)。
 
 iOS 18 基线使用 openAppWhenRun，意图只编入 App；停止/刷新 LiveActivityIntent 保留在 App 和 Widget。较新 SDK 将 openAppWhenRun 标为弃用，但仍保留兼容 API；发布前需要在所选 Xcode SDK 检查 App Intents 元数据提取。
 

@@ -147,6 +147,45 @@ import Foundation
         precondition(HomeNoticePresentation.visibleNotice(openingNotice, command: command, status: status) == nil)
         let stopWarning = "本地会话已停止，但未确认硬件停止送达。请按物理 STOP。"
         precondition(HomeNoticePresentation.visibleNotice(stopWarning, command: command, status: status) == stopWarning)
-        print("PASS: capture generation/state, revoked Activity warnings, absolute-mode evidence and honest pause reasons, relative-mode help, current launch-only notice and preserved STOP warnings")
+        // Prompt state is independent of command mutations and ReplayKit lifetime.
+        let idlePrompt = HomeBroadcastPromptInput(sessionID: nil, prepared: false, newTaskReady: false,
+            hasReceivedFrame: false, otherPresentation: false)
+        var promptInput = HomeBroadcastPromptInput(sessionID: "new-session", prepared: true, newTaskReady: true,
+            hasReceivedFrame: false, otherPresentation: false)
+        var prompt = HomeBroadcastPromptState()
+        prompt.observe(idlePrompt)
+        prompt.observe(promptInput)
+        precondition(prompt.isPresented, "A newly prepared task automatically prompts for screen sharing")
+        prompt.dismiss()
+        prompt.observe(promptInput)
+        precondition(!prompt.isPresented, "Polling must not reopen a dismissed prompt")
+        prompt.reopen(promptInput)
+        precondition(prompt.isPresented, "The chat entry can reopen the current prompt without restarting a task")
+        promptInput.hasReceivedFrame = true
+        prompt.observe(promptInput)
+        precondition(!prompt.isPresented, "The first matching frame closes only the local prompt")
+        prompt.reopen(promptInput)
+        precondition(!prompt.isPresented, "An already-started broadcast does not show another start prompt")
+        promptInput.hasReceivedFrame = false
+        prompt.observe(promptInput)
+        precondition(!prompt.isPresented, "An aging or absent frame does not automatically raise the prompt again")
+        promptInput.sessionID = "second-session"
+        promptInput.otherPresentation = true
+        prompt.observe(promptInput)
+        precondition(!prompt.isPresented, "Wait until settings or calibration dismisses")
+        promptInput.otherPresentation = false
+        prompt.observe(promptInput)
+        precondition(prompt.isPresented)
+        promptInput.prepared = false
+        prompt.observe(promptInput)
+        precondition(!prompt.isPresented, "Cancelling the task closes the stale prompt")
+        var restoredPrompt = HomeBroadcastPromptState()
+        promptInput.prepared = true
+        restoredPrompt.observe(promptInput)
+        restoredPrompt.observe(promptInput)
+        precondition(!restoredPrompt.isPresented, "Opening the app on an old session must not prompt automatically")
+        restoredPrompt.reopen(promptInput)
+        precondition(restoredPrompt.isPresented, "An old prepared session still has an explicit sharing entry")
+        print("PASS: capture state, prompt lifecycle, restored-session suppression, Activity warnings, absolute-mode evidence and preserved STOP warnings")
     }
 }

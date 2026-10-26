@@ -247,6 +247,34 @@ struct VoiceFeedbackVoiceOption: Identifiable, Equatable {
     }
 }
 
+enum VoiceFeedbackProvider: String, CaseIterable, Identifiable {
+    case system, fishAudio
+    var id: String { rawValue }
+    var title: String { self == .system ? "iPhone 声音" : "Fish Audio" }
+}
+
+/// One generation spans synthesis and playback. Cancellation invalidates late audio.
+struct VoiceFeedbackPlaybackGate {
+    enum Intent { case automatic, preview }
+    private(set) var generation: UUID?
+    private var intent: Intent?
+
+    mutating func begin(intent: Intent, feedbackEnabled: Bool) -> UUID? {
+        cancel()
+        guard intent == .preview || feedbackEnabled else { return nil }
+        let token = UUID()
+        self.intent = intent
+        generation = token
+        return token
+    }
+
+    func permits(_ token: UUID, feedbackEnabled: Bool) -> Bool {
+        generation == token && (intent == .preview || feedbackEnabled)
+    }
+
+    mutating func cancel() { generation = nil; intent = nil }
+}
+
 /// App-only output preferences. They grant no microphone, task or screen-upload permission.
 @MainActor
 final class VoiceFeedbackPreferences: ObservableObject {
@@ -254,12 +282,24 @@ final class VoiceFeedbackPreferences: ObservableObject {
     private enum Key {
         static let enabled = "SightLatch.voiceFeedback.enabled"
         static let identifier = "SightLatch.voiceFeedback.voiceIdentifier"
+        static let provider = "SightLatch.voiceFeedback.provider"
+        static let fishModel = "SightLatch.voiceFeedback.fishModel"
+        static let fishReference = "SightLatch.voiceFeedback.fishReference"
     }
     @Published var spokenFeedbackEnabled: Bool {
         didSet { defaults.set(spokenFeedbackEnabled, forKey: Key.enabled) }
     }
     @Published var selectedVoiceIdentifier: String {
         didSet { defaults.set(selectedVoiceIdentifier, forKey: Key.identifier) }
+    }
+    @Published var provider: VoiceFeedbackProvider {
+        didSet { defaults.set(provider.rawValue, forKey: Key.provider) }
+    }
+    @Published var fishModel: FishSpeechModel {
+        didSet { defaults.set(fishModel.rawValue, forKey: Key.fishModel) }
+    }
+    @Published var fishReferenceID: String {
+        didSet { defaults.set(fishReferenceID, forKey: Key.fishReference) }
     }
     @Published private(set) var availableVoices: [VoiceFeedbackVoiceOption] = []
     private var systemMandarinIdentifier: String?
@@ -269,6 +309,9 @@ final class VoiceFeedbackPreferences: ObservableObject {
         self.defaults = defaults
         spokenFeedbackEnabled = defaults.object(forKey: Key.enabled) == nil ? true : defaults.bool(forKey: Key.enabled)
         selectedVoiceIdentifier = defaults.string(forKey: Key.identifier) ?? ""
+        provider = VoiceFeedbackProvider(rawValue: defaults.string(forKey: Key.provider) ?? "") ?? .system
+        fishModel = FishSpeechModel(rawValue: defaults.string(forKey: Key.fishModel) ?? "") ?? .defaultModel
+        fishReferenceID = defaults.string(forKey: Key.fishReference) ?? ""
         reloadAvailableVoices()
     }
 
@@ -296,6 +339,7 @@ final class VoiceFeedbackPreferences: ObservableObject {
     }
 
     var selectedVoiceDescription: String {
+        if provider == .fishAudio { return fishReferenceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Fish Audio · 默认音色" : "Fish Audio · 自选音色" }
         if let selected = availableVoices.first(where: { $0.id == selectedVoiceIdentifier }) { return selected.displayName }
         let best = availableVoices.first?.displayName ?? "系统基础中文音色"
         return selectedVoiceIdentifier.isEmpty ? "自动 · \(best)" : "原音色不可用，暂用 \(best)"
@@ -306,6 +350,11 @@ struct VoiceFeedbackSettingsView: View {
     @ObservedObject private var preferences = VoiceFeedbackPreferences.shared
     @ObservedObject private var voice = SessionVoiceController.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var fishAPIKey = ""
+    @State private var fishKeySaved = false
+    @State private var fishKeyMessage = ""
+    @State private var fishKeyError = false
+    @State private var confirmKeyRemoval = false
 
     private var featuredVoices: [VoiceFeedbackVoiceOption] {
         var result = Array(preferences.availableVoices.prefix(2))
@@ -328,39 +377,15 @@ struct VoiceFeedbackSettingsView: View {
             }.multilineTextAlignment(.center).frame(maxWidth: .infinity).padding(.bottom, 4)
             PilotSettingsCard {
                 Toggle(isOn: $preferences.spokenFeedbackEnabled) {
-                    PilotSettingsRowLabel(title: "进度播报", subtitle: "在关键步骤告诉你发生了什么", symbol: "speaker.wave.2")
+                    PilotSettingsRowLabel(title: "进度播报", subtitle: "会话语音开启时，播报关键进展", symbol: "speaker.wave.2")
                 }.tint(PilotPalette.accent)
                     .accessibilityIdentifier("settings.spokenFeedback")
             }
-            VStack(alignment: .leading, spacing: 12) {
-                Text("中文音色").font(.subheadline.weight(.medium)).foregroundStyle(.secondary).padding(.leading, 4)
-                voiceOption(id: "", name: "自动选择", detail: "优先使用已下载的高品质声音", symbol: "sparkles")
-                ForEach(featuredVoices) { option in
-                    voiceOption(id: option.id, name: option.name, detail: "\(voiceRegion(option.language)) · \(option.qualityLabel)", symbol: "waveform")
-                }
-                Menu {
-                    Picker("中文音色", selection: $preferences.selectedVoiceIdentifier) {
-                        Text("自动选择最佳音色").tag("")
-                        if !preferences.selectedVoiceIdentifier.isEmpty,
-                           !preferences.availableVoices.contains(where: { $0.id == preferences.selectedVoiceIdentifier }) {
-                            Text("原音色已不可用").tag(preferences.selectedVoiceIdentifier)
-                        }
-                        ForEach(preferences.availableVoices) { option in Text(option.displayName).tag(option.id) }
-                    }
-                } label: {
-                    HStack {
-                        Text("更多音色")
-                        Spacer()
-                        Image(systemName: "chevron.up.chevron.down").font(.caption)
-                    }.font(.subheadline).frame(minHeight: 44).contentShape(Rectangle())
-                }
-                    .accessibilityIdentifier("settings.feedbackVoice")
-                if preferences.selectedVoiceIdentifier.isEmpty ||
-                    !preferences.availableVoices.contains(where: { $0.id == preferences.selectedVoiceIdentifier }) {
-                    Text(preferences.selectedVoiceDescription).font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 4)
-                }
-            }
+            Picker("播报服务", selection: $preferences.provider) {
+                ForEach(VoiceFeedbackProvider.allCases) { provider in Text(provider.title).tag(provider) }
+            }.pickerStyle(.segmented).accessibilityIdentifier("settings.feedbackProvider")
+            if preferences.provider == .fishAudio { fishSettings }
+            else { systemVoices }
             Button {
                 if voice.isPreviewingFeedback { voice.stopVoicePreview() }
                 else { voice.previewFeedbackVoice() }
@@ -372,27 +397,119 @@ struct VoiceFeedbackSettingsView: View {
             if !voice.voicePreviewMessage.isEmpty {
                 PilotSettingsNotice(message: voice.voicePreviewMessage)
             }
-            DisclosureGroup {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("仅控制任务播报，不改变麦克风状态。关闭播报后，已开启的会话语音仍可用“小视”追加指令。")
-                    Text("仅使用此 iPhone 已有的中文声音，优先高级和增强音色。试听不会开启播报，也不会提交指令。")
-                    if !preferences.availableVoices.contains(where: { $0.qualityRank > 1 }) {
-                        Text("当前只有基础音色。可到 iPhone「设置 → 辅助功能 → 阅读与朗读 → 声音 → 中文」下载增强或高级声音；旧系统入口名为「朗读内容」。下载后返回此页即可更新。")
-                        Link("Apple 音色下载说明", destination: URL(string: "https://support.apple.com/zh-cn/111798")!)
-                            .frame(minHeight: 44)
-                    }
-                }.font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true).padding(.top, 10)
-            } label: {
-                Text("音色与下载").frame(minHeight: 44)
-            }.font(.subheadline).padding(.horizontal, 4)
+            Text(preferences.provider == .fishAudio
+                 ? "播报文字会发送至 Fish Audio。密钥保存在本机，试听不会开启任务播报。"
+                 : "使用 iPhone 已下载的中文声音。试听不会开启任务播报。")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 4)
+
         }
         .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: preferences.selectedVoiceIdentifier)
         .onChange(of: preferences.selectedVoiceIdentifier) { _, _ in voice.stopVoicePreview() }
-        .onAppear { preferences.reloadAvailableVoices() }
+        .onAppear {
+            preferences.reloadAvailableVoices()
+            fishKeySaved = (try? FishSpeechKeychain.load()) != nil
+        }
+        .confirmationDialog("移除 Fish Audio 密钥？", isPresented: $confirmKeyRemoval) {
+            Button("移除密钥", role: .destructive) { saveFishKey(removing: true) }
+        }
         .onDisappear { voice.stopVoicePreview() }
         .onReceive(NotificationCenter.default.publisher(for: AVSpeechSynthesizer.availableVoicesDidChangeNotification)) { _ in
             preferences.reloadAvailableVoices()
+        }
+    }
+
+    private var fishSettings: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            PilotSettingsCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        PilotSettingsRowLabel(title: "API Key", subtitle: fishKeySaved ? "已保存在此 iPhone" : "连接你的 Fish Audio 账户", symbol: "key")
+                        Spacer(minLength: 8)
+                        Link("获取", destination: URL(string: "https://fish.audio/app/api-keys")!)
+                            .font(.subheadline).frame(minHeight: 44)
+                    }
+                    SecureField(fishKeySaved ? "输入新密钥以替换" : "粘贴 API Key", text: $fishAPIKey)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .accessibilityIdentifier("settings.fishAPIKey")
+                        .padding(12).background(PilotPalette.group, in: RoundedRectangle(cornerRadius: 12))
+                    HStack {
+                        Button(fishKeySaved ? "更新密钥" : "保存密钥") { saveFishKey() }
+                            .disabled(fishAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .accessibilityIdentifier("settings.saveFishAPIKey")
+                        Spacer()
+                        if fishKeySaved {
+                            Button("移除", role: .destructive) { confirmKeyRemoval = true }
+                        }
+                    }.font(.subheadline).frame(minHeight: 44)
+                }
+            }
+            if !fishKeyMessage.isEmpty { PilotSettingsNotice(message: fishKeyMessage, isError: fishKeyError) }
+            PilotSettingsCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        PilotSettingsRowLabel(title: "音色", subtitle: "填入音色 ID，留空使用默认声音", symbol: "waveform")
+                        Spacer(minLength: 8)
+                        Link("选声音", destination: URL(string: "https://fish.audio/")!)
+                            .font(.subheadline).frame(minHeight: 44)
+                    }
+                    TextField("Reference ID", text: $preferences.fishReferenceID)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .accessibilityIdentifier("settings.fishReferenceID")
+                        .padding(12).background(PilotPalette.group, in: RoundedRectangle(cornerRadius: 12))
+                    Divider()
+                    Picker("语音模型", selection: $preferences.fishModel) {
+                        ForEach(FishSpeechModel.allCases) { model in Text(model.displayName).tag(model) }
+                    }.accessibilityIdentifier("settings.fishModel")
+                }
+            }
+        }
+    }
+
+    private var systemVoices: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("中文音色").font(.subheadline.weight(.medium)).foregroundStyle(.secondary).padding(.leading, 4)
+            voiceOption(id: "", name: "自动选择", detail: "优先使用已下载的高品质声音", symbol: "sparkles")
+            ForEach(featuredVoices) { option in
+                voiceOption(id: option.id, name: option.name, detail: "\(voiceRegion(option.language)) · \(option.qualityLabel)", symbol: "waveform")
+            }
+            Menu {
+                Picker("中文音色", selection: $preferences.selectedVoiceIdentifier) {
+                    Text("自动选择最佳音色").tag("")
+                    if !preferences.selectedVoiceIdentifier.isEmpty,
+                       !preferences.availableVoices.contains(where: { $0.id == preferences.selectedVoiceIdentifier }) {
+                        Text("原音色已不可用").tag(preferences.selectedVoiceIdentifier)
+                    }
+                    ForEach(preferences.availableVoices) { option in Text(option.displayName).tag(option.id) }
+                }
+            } label: {
+                HStack {
+                    Text("更多音色")
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down").font(.caption)
+                }.font(.subheadline).frame(minHeight: 44).contentShape(Rectangle())
+            }.accessibilityIdentifier("settings.feedbackVoice")
+            if preferences.selectedVoiceIdentifier.isEmpty ||
+                !preferences.availableVoices.contains(where: { $0.id == preferences.selectedVoiceIdentifier }) {
+                Text(preferences.selectedVoiceDescription).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 4)
+            }
+            if !preferences.availableVoices.contains(where: { $0.qualityRank > 1 }) {
+                Link("下载高品质 iPhone 声音", destination: URL(string: "https://support.apple.com/zh-cn/111798")!)
+                    .font(.caption).frame(minHeight: 44)
+            }
+        }
+    }
+
+    private func saveFishKey(removing: Bool = false) {
+        voice.cancelCurrentFeedback()
+        do {
+            try FishSpeechKeychain.save(removing ? "" : fishAPIKey.trimmingCharacters(in: .whitespacesAndNewlines))
+            fishAPIKey = ""; fishKeySaved = !removing; fishKeyError = false
+            fishKeyMessage = removing ? "密钥已移除。" : "密钥已保存，可以试听了。"
+        } catch {
+            fishKeyError = true
+            fishKeyMessage = (error as? FishSpeechError)?.localizedDescription ?? "密钥未能保存，请解锁 iPhone 后重试。"
         }
     }
 
@@ -463,6 +580,7 @@ final class SessionVoiceController: NSObject, ObservableObject {
     @Published private(set) var isRequestingPermission = false
     @Published private(set) var isListening = false
     @Published private(set) var isSpeaking = false
+    @Published private(set) var isPreparingFeedback = false
     @Published private(set) var isPreviewingFeedback = false
     @Published private(set) var voicePreviewMessage = ""
     @Published private(set) var message = ""
@@ -471,6 +589,10 @@ final class SessionVoiceController: NSObject, ObservableObject {
 
     private let engine = AVAudioEngine()
     private let speaker = AVSpeechSynthesizer()
+    private let fishSpeech = FishSpeechClient()
+    private var fishPlayer: AVAudioPlayer?
+    private var synthesisTask: Task<Void, Never>?
+    private var playbackGate = VoiceFeedbackPlaybackGate()
     private let activity = SessionVoiceAudioActivity()
     private var recognizer: SFSpeechRecognizer?
     private var request: SFSpeechAudioBufferRecognitionRequest?
@@ -505,11 +627,22 @@ final class SessionVoiceController: NSObject, ObservableObject {
         super.init()
         speaker.delegate = self
         let preferences = VoiceFeedbackPreferences.shared
-        preferences.$spokenFeedbackEnabled.dropFirst().sink { [weak self] _ in
-            Task { @MainActor [weak self] in self?.applyFeedbackMute() }
+        // @Published emits before storage changes. Use the emitted value and cancel
+        // synchronously so a queued utterance cannot escape between the tap and mute.
+        preferences.$spokenFeedbackEnabled.dropFirst().sink { [weak self] enabled in
+            if !enabled { self?.cancelCurrentFeedback() }
         }.store(in: &preferenceObservers)
         preferences.$selectedVoiceIdentifier.dropFirst().sink { [weak self] _ in
-            Task { @MainActor [weak self] in self?.replaceCurrentFeedbackVoice() }
+            self?.cancelCurrentFeedback()
+        }.store(in: &preferenceObservers)
+        preferences.$provider.dropFirst().sink { [weak self] _ in
+            self?.cancelCurrentFeedback()
+        }.store(in: &preferenceObservers)
+        preferences.$fishModel.dropFirst().sink { [weak self] _ in
+            self?.cancelCurrentFeedback()
+        }.store(in: &preferenceObservers)
+        preferences.$fishReferenceID.dropFirst().sink { [weak self] _ in
+            self?.cancelCurrentFeedback()
         }.store(in: &preferenceObservers)
         interruptionObserver = NotificationCenter.default.addObserver(
             forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
@@ -582,10 +715,9 @@ final class SessionVoiceController: NSObject, ObservableObject {
         sessionLimit?.cancel(); sessionLimit = nil
         restart?.cancel(); restart = nil
         endRecognition()
-        utteranceID = nil; pendingAnnouncement = nil
-        activeSpokenText = nil; previewResumeGeneration = nil
+        cancelSpeechOutput(); pendingAnnouncement = nil
+        previewResumeGeneration = nil
         previewLimit?.cancel(); previewLimit = nil; isPreviewingFeedback = false
-        speaker.stopSpeaking(at: .immediate)
         isSpeaking = false; isEnabled = false; isRequestingPermission = false
         activeSessionID = nil; recognizer = nil; voiceDeadline = SessionVoiceDeadline()
         expectedStopGeneration = nil; isFinishing = false
@@ -636,7 +768,7 @@ final class SessionVoiceController: NSObject, ObservableObject {
               !phrase.isEmpty, phrase.count <= 120, !announcedKeys.contains(key) else { return }
         announcedKeys.insert(key)
         pendingAnnouncement = phrase // Keep only the latest status while a phrase is speaking.
-        guard !isSpeaking, pendingCommand == nil else { return }
+        guard !isSpeaking, !isPreparingFeedback, pendingCommand == nil else { return }
         speakPendingAnnouncement()
     }
 
@@ -711,7 +843,10 @@ final class SessionVoiceController: NSObject, ObservableObject {
                     guard self.sessionIsCurrent() else { self.stop(); return }
                     let accepted = self.deduplicator.accept(command, at: ProcessInfo.processInfo.systemUptime)
                     self.endRecognition() // Invalidates this segment before invoking user code.
-                    if accepted { self.onCommand?(command) }
+                    if accepted {
+                        self.cancelSpeechOutput(); self.pendingAnnouncement = nil
+                        self.onCommand?(command)
+                    }
                     guard self.isEnabled, !self.isFinishing else { return }
                     if self.pendingAnnouncement != nil { self.speakPendingAnnouncement() }
                     else { self.scheduleRestart() }
@@ -753,7 +888,7 @@ final class SessionVoiceController: NSObject, ObservableObject {
     }
 
     private func speakPendingAnnouncement() {
-        guard isEnabled, !isSpeaking, let phrase = pendingAnnouncement else { return }
+        guard isEnabled, !isSpeaking, !isPreparingFeedback, let phrase = pendingAnnouncement else { return }
         guard VoiceFeedbackPreferences.shared.spokenFeedbackEnabled else {
             pendingAnnouncement = nil
             if isFinishing { stop() } else { scheduleRestart() }
@@ -761,13 +896,27 @@ final class SessionVoiceController: NSObject, ObservableObject {
         }
         pendingAnnouncement = nil
         restart?.cancel(); restart = nil
-        endRecognition() // Half duplex: our own speech never reaches the recognizer.
+        // Cloud generation stays quiet: keep wake-word recognition until audio is ready.
+        if VoiceFeedbackPreferences.shared.provider == .system { endRecognition() }
         speak(phrase)
     }
 
     private func speechFinished(_ id: ObjectIdentifier) {
         guard utteranceID == id else { return }
-        utteranceID = nil; activeSpokenText = nil; isSpeaking = false
+        completeSpeech()
+    }
+
+    private func audioFinished(_ id: ObjectIdentifier, successfully: Bool) {
+        guard let player = fishPlayer, ObjectIdentifier(player) == id else { return }
+        if !successfully {
+            failSpeech("Fish Audio 音频未能播放，请重新试听。")
+        } else { completeSpeech() }
+    }
+
+    private func completeSpeech() {
+        playbackGate.cancel()
+        synthesisTask = nil; fishPlayer = nil
+        utteranceID = nil; activeSpokenText = nil; isSpeaking = false; isPreparingFeedback = false
         if isPreviewingFeedback { finishVoicePreview(); return }
         guard isEnabled else { return }
         if isFinishing { stop(); message = "任务已结束，会话语音已关闭。"; return }
@@ -798,16 +947,16 @@ final class SessionVoiceController: NSObject, ObservableObject {
         isPreviewingFeedback = false; previewResumeGeneration = nil
         restart?.cancel(); restart = nil
         endRecognition()
-        utteranceID = nil; speaker.stopSpeaking(at: .immediate); isSpeaking = false
+        cancelSpeechOutput()
         pendingAnnouncement = phrase
-        speakPendingAnnouncement()
         sessionLimit?.cancel()
         let token = sessionGeneration
         sessionLimit = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(8))
+            try? await Task.sleep(for: .seconds(35))
             guard !Task.isCancelled, let self, self.sessionGeneration == token else { return }
-            self.stop() // A missing TTS callback cannot retain the audio session.
+            self.stop() // Synthesis itself times out at 30 seconds; release even if a callback is lost.
         }
+        speakPendingAnnouncement()
     }
 
     /// An explicit, foreground-only sample shares the same half-duplex audio coordinator.
@@ -820,10 +969,9 @@ final class SessionVoiceController: NSObject, ObservableObject {
         VoiceTaskRecorder.stopActive()
         restart?.cancel(); restart = nil
         endRecognition()
-        utteranceID = nil; speaker.stopSpeaking(at: .immediate)
-        isSpeaking = false; pendingAnnouncement = nil
+        cancelSpeechOutput(); pendingAnnouncement = nil
         VoiceFeedbackPreferences.shared.reloadAvailableVoices()
-        guard VoiceFeedbackPreferences.shared.resolvedVoice != nil else {
+        guard VoiceFeedbackPreferences.shared.provider == .fishAudio || VoiceFeedbackPreferences.shared.resolvedVoice != nil else {
             voicePreviewMessage = "此 iPhone 暂无可用中文音色。"
             if isEnabled { scheduleRestart() }
             return
@@ -838,11 +986,6 @@ final class SessionVoiceController: NSObject, ObservableObject {
             isPreviewingFeedback = true
             voicePreviewMessage = "正在试听：\(VoiceFeedbackPreferences.shared.selectedVoiceDescription)"
             speak("你好，我是小视。我会一边观察画面，一边帮你完成任务。")
-            previewLimit = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(10))
-                guard !Task.isCancelled, let self else { return }
-                self.stopVoicePreview()
-            }
         } catch {
             voicePreviewMessage = "暂时无法试听，请检查当前音频输出后再试。"
             if isEnabled { scheduleRestart() }
@@ -855,8 +998,7 @@ final class SessionVoiceController: NSObject, ObservableObject {
 
     func stopVoicePreview() {
         guard isPreviewingFeedback else { return }
-        utteranceID = nil; activeSpokenText = nil
-        speaker.stopSpeaking(at: .immediate); isSpeaking = false
+        cancelSpeechOutput()
         finishVoicePreview()
     }
 
@@ -876,35 +1018,131 @@ final class SessionVoiceController: NSObject, ObservableObject {
     }
 
     private func speak(_ phrase: String) {
-        let utterance = AVSpeechUtterance(string: phrase)
-        utterance.voice = VoiceFeedbackPreferences.shared.resolvedVoice
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.96
-        utterance.pitchMultiplier = 1
+        let preferences = VoiceFeedbackPreferences.shared
+        guard isPreviewingFeedback || feedbackSessionIsCurrent() else { cancelCurrentFeedback(); return }
+        let intent: VoiceFeedbackPlaybackGate.Intent = isPreviewingFeedback ? .preview : .automatic
+        guard let token = playbackGate.begin(intent: intent, feedbackEnabled: preferences.spokenFeedbackEnabled) else {
+            pendingAnnouncement = nil
+            if isFinishing { stop() } else if isEnabled { scheduleRestart() }
+            return
+        }
         activeSpokenText = phrase
-        utteranceID = ObjectIdentifier(utterance); isSpeaking = true
-        speaker.speak(utterance)
+        if preferences.provider == .fishAudio {
+            isPreparingFeedback = true
+            let configuration = FishSpeechConfiguration(model: preferences.fishModel, referenceID: preferences.fishReferenceID)
+            let apiKey: String
+            do {
+                guard let savedKey = try FishSpeechKeychain.load(), !savedKey.isEmpty else {
+                    failSpeech("请先在语音与播报中保存 Fish Audio 密钥。"); return
+                }
+                apiKey = savedKey
+            } catch {
+                failSpeech("暂时无法读取 Fish Audio 密钥，请解锁 iPhone 后重试。"); return
+            }
+            if isPreviewingFeedback { voicePreviewMessage = "正在生成试听声音…" }
+            synthesisTask = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let audio = try await self.fishSpeech.synthesize(text: phrase, configuration: configuration, apiKey: apiKey)
+                    guard !Task.isCancelled,
+                          self.playbackGate.permits(token, feedbackEnabled: VoiceFeedbackPreferences.shared.spokenFeedbackEnabled) else { return }
+                    if self.isPreviewingFeedback, UIApplication.shared.applicationState != .active {
+                        self.stopVoicePreview(); return
+                    }
+                    // A response can arrive after STOP, expiry or a session replacement.
+                    guard self.isPreviewingFeedback || self.feedbackSessionIsCurrent() else {
+                        self.cancelCurrentFeedback(); return
+                    }
+                    guard self.pendingCommand == nil else {
+                        self.cancelSpeechOutput(); return // Let an in-progress user command finish first.
+                    }
+                    let player = try AVAudioPlayer(data: audio)
+                    player.delegate = self
+                    self.fishPlayer = player
+                    self.restart?.cancel(); self.restart = nil
+                    self.endRecognition() // Half duplex starts at playback, not during synthesis.
+                    self.isPreparingFeedback = false; self.isSpeaking = true
+                    guard player.prepareToPlay(), player.play() else {
+                        self.failSpeech("Fish Audio 音频未能播放，请重新试听。"); return
+                    }
+                    self.limitPlayback(token: token, duration: min(30, max(5, player.duration + 2)))
+                    if self.isPreviewingFeedback { self.voicePreviewMessage = "正在试听：\(VoiceFeedbackPreferences.shared.selectedVoiceDescription)" }
+                } catch {
+                    guard !Task.isCancelled,
+                          self.playbackGate.permits(token, feedbackEnabled: VoiceFeedbackPreferences.shared.spokenFeedbackEnabled) else { return }
+                    self.failSpeech(error.localizedDescription)
+                }
+            }
+            if !isPreviewingFeedback, !isFinishing, !isListening { scheduleRestart() }
+        } else {
+            guard let voice = preferences.resolvedVoice else {
+                failSpeech("此 iPhone 暂无可用中文音色。"); return
+            }
+            isSpeaking = true
+            let utterance = AVSpeechUtterance(string: phrase)
+            utterance.voice = voice
+            utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.96
+            utterance.pitchMultiplier = 1
+            utteranceID = ObjectIdentifier(utterance)
+            speaker.speak(utterance)
+            limitPlayback(token: token, duration: 25)
+        }
     }
 
-    private func applyFeedbackMute() {
-        guard !VoiceFeedbackPreferences.shared.spokenFeedbackEnabled else { return }
+    private func feedbackSessionIsCurrent() -> Bool {
+        guard isEnabled, let id = activeSessionID,
+              let command = SharedStore.shared.command, command.id == id,
+              SharedStore.shared.configuration.uploadConsent,
+              SharedStore.shared.stopGeneration == expectedStopGeneration else { return false }
+        // Completion has already ended the task, but STOP still invalidates its final phrase.
+        return isFinishing || sessionIsCurrent()
+    }
+
+    private func limitPlayback(token: UUID, duration: TimeInterval) {
+        guard isPreviewingFeedback || isFinishing else { return }
+        let limit = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(duration))
+            guard !Task.isCancelled, let self,
+                  self.playbackGate.permits(token, feedbackEnabled: VoiceFeedbackPreferences.shared.spokenFeedbackEnabled) else { return }
+            if self.isPreviewingFeedback { self.stopVoicePreview() }
+            else if self.isFinishing { self.stop() }
+        }
+        if isPreviewingFeedback { previewLimit?.cancel(); previewLimit = limit }
+        else { sessionLimit?.cancel(); sessionLimit = limit }
+    }
+
+    private func failSpeech(_ reason: String) {
+        let wasPreview = isPreviewingFeedback
+        cancelSpeechOutput()
+        pendingAnnouncement = nil
+        if wasPreview { finishVoicePreview() }
+        else if isFinishing { stop() }
+        else if isEnabled, !isListening { scheduleRestart(delay: 0.3) }
+        voicePreviewMessage = reason
+        if !wasPreview { message = reason }
+    }
+
+    private func cancelSpeechOutput() {
+        playbackGate.cancel()
+        synthesisTask?.cancel(); synthesisTask = nil
+        fishPlayer?.delegate = nil; fishPlayer?.stop(); fishPlayer = nil
+        utteranceID = nil; activeSpokenText = nil
+        speaker.stopSpeaking(at: .immediate); isSpeaking = false; isPreparingFeedback = false
+    }
+
+    /// Stops current output without disabling an independently enabled microphone.
+    func cancelCurrentFeedback() {
         pendingAnnouncement = nil
         if isPreviewingFeedback { stopVoicePreview(); return }
-        guard isSpeaking else { return }
-        utteranceID = nil; activeSpokenText = nil
-        speaker.stopSpeaking(at: .immediate); isSpeaking = false
+        let wasSpeaking = isSpeaking
+        cancelSpeechOutput()
         if isFinishing { stop() }
-        else if isEnabled {
+        else if wasSpeaking, isEnabled {
             guard sessionIsCurrent() else { stop(); return }
             scheduleRestart(delay: 0.3)
         }
     }
 
-    private func replaceCurrentFeedbackVoice() {
-        guard isSpeaking, let phrase = activeSpokenText,
-              isPreviewingFeedback || VoiceFeedbackPreferences.shared.spokenFeedbackEnabled else { return }
-        utteranceID = nil; speaker.stopSpeaking(at: .immediate); isSpeaking = false
-        speak(phrase)
-    }
 }
 
 extension SessionVoiceController: AVSpeechSynthesizerDelegate {
@@ -915,5 +1153,17 @@ extension SessionVoiceController: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         let id = ObjectIdentifier(utterance)
         Task { @MainActor [weak self] in self?.speechFinished(id) }
+    }
+}
+
+
+extension SessionVoiceController: AVAudioPlayerDelegate {
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        let id = ObjectIdentifier(player)
+        Task { @MainActor [weak self] in self?.audioFinished(id, successfully: flag) }
+    }
+    nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        let id = ObjectIdentifier(player)
+        Task { @MainActor [weak self] in self?.audioFinished(id, successfully: false) }
     }
 }

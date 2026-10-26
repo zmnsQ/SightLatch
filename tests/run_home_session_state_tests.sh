@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 build = Path(sys.argv[1])
 home = Path('ios/App/HomeView.swift').read_text()
-state = 'enum HomeCaptureState:' + home.split('enum HomeCaptureState:', 1)[1].split('private struct BroadcastPicker:', 1)[0]
+state = 'enum HomeCaptureState:' + home.split('enum HomeCaptureState:', 1)[1].split('/// A local prompt,', 1)[0]
 build.joinpath('HomeState.swift').write_text('import Foundation\n' + state)
 manager = Path('ios/App/PilotActivityManager.swift').read_text()
 method = '    static func presentationStatus(' + manager.split('    static func presentationStatus(', 1)[1].split('    private func isCurrent(', 1)[0]

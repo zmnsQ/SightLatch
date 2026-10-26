@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AA5555555555555555550001 /* App/FishSpeechClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA5555555555555555550000 /* App/FishSpeechClient.swift */; };
 		AA2222222222222222220802 /* Shared/PilotActivityPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2222222222222222220800 /* Shared/PilotActivityPresentation.swift */; };
 		AA4444444444444444440021 /* App/RunDurationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA4444444444444444440020 /* App/RunDurationSettingsView.swift */; };
 		AA4444444444444444440011 /* Widget/Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA4444444444444444440010 /* Widget/Assets.xcassets */; };
@@ -94,6 +95,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		AA5555555555555555550000 /* App/FishSpeechClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/FishSpeechClient.swift; sourceTree = "<group>"; };
 		AA4444444444444444440020 /* App/RunDurationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/RunDurationSettingsView.swift; sourceTree = "<group>"; };
 		AA4444444444444444440010 /* Widget/Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Widget/Assets.xcassets; sourceTree = "<group>"; };
 		AA4444444444444444440000 /* App/PilotVisuals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/PilotVisuals.swift; sourceTree = "<group>"; };
@@ -183,6 +185,7 @@
 				AA2222222222222222220900 /* App/PilotActivityManager.swift */,
 				AA2222222222222222220800 /* Shared/PilotActivityPresentation.swift */,
 				AA2222222222222222220700 /* App/VoiceTaskComposer.swift */,
+				AA5555555555555555550000 /* App/FishSpeechClient.swift */,
 				AA2222222222222222220600 /* App/SightLatchShortcuts.swift */,
 				AA2222222222222222220500 /* App/PilotShortcutRouter.swift */,
 				AA2222222222222222220400 /* App/ChatGPTSettingsSection.swift */,
@@ -356,6 +359,7 @@
 				AA2222222222222222220901 /* App/PilotActivityManager.swift in Sources */,
 				AA2222222222222222220801 /* Shared/PilotActivityPresentation.swift in Sources */,
 				AA2222222222222222220701 /* App/VoiceTaskComposer.swift in Sources */,
+				AA5555555555555555550001 /* App/FishSpeechClient.swift in Sources */,
 				AA2222222222222222220601 /* App/SightLatchShortcuts.swift in Sources */,
 				AA2222222222222222220501 /* App/PilotShortcutRouter.swift in Sources */,
 				AA2222222222222222220401 /* App/ChatGPTSettingsSection.swift in Sources */,

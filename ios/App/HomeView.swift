@@ -21,11 +21,11 @@ struct HomeView: View {
     @State private var showRunDuration = false
     @State private var confirmUnlimitedRun = false
     @State private var pendingUnlimitedRequestID: UUID?
+    @State private var broadcastPrompt = HomeBroadcastPromptState()
     @State private var followsLatest = true
     @State private var userScrolling = false
     @State private var hasUnreadUpdate = false
     @FocusState private var composerFocused: Bool
-    @AccessibilityFocusState private var broadcastFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -131,12 +131,33 @@ struct HomeView: View {
             .onChange(of: shortcutRouter.pendingRequest?.id) { _, _ in receiveShortcut() }
             .onChange(of: showOnboarding) { _, shown in if !shown { receiveShortcut() } }
             .onChange(of: model.isSessionActive) { _, active in if !active { receiveShortcut() } }
-            .onChange(of: model.prepared) { _, prepared in
-                if prepared { composerFocused = false; broadcastFocused = true }
+            .onChange(of: broadcastPromptInput, initial: true) { _, input in
+                broadcastPrompt.observe(input)
+                if broadcastPrompt.isPresented { composerFocused = false }
             }
             .onChange(of: model.taskFlow.phase) { _, _ in receiveShortcut() }
             }
         }
+        .allowsHitTesting(!broadcastPrompt.isPresented)
+        .accessibilityHidden(broadcastPrompt.isPresented)
+        .overlay {
+            // The picker remains mounted when our prompt closes. Its system panel
+            // and the broadcast belong to ReplayKit, not to this presentation.
+            BroadcastStartPrompt(isPresented: broadcastPrompt.isPresented,
+                enabled: model.prepared && !model.stopping,
+                onDismiss: { broadcastPrompt.dismiss() })
+        }
+    }
+    private var broadcastPromptInput: HomeBroadcastPromptInput {
+        let command = SharedStore.shared.command
+        let capture = HomeCaptureState.currentObservation(model.captureObservation, command: command)
+        return HomeBroadcastPromptInput(
+            sessionID: command?.id,
+            prepared: model.prepared && command?.running == true && !model.stopping,
+            newTaskReady: model.taskFlow.phase == .ready && model.taskFlow.sessionID == command?.id,
+            hasReceivedFrame: command?.executionStartedAt != nil || (capture?.receivedAt.map { $0 >= (command?.createdAt ?? .distantFuture) } ?? false),
+            otherPresentation: showSettings || showDeviceSettings || showAISettings || showCalibration ||
+                showWorkspace || showOnboarding || showRunDuration || confirmUnlimitedRun)
     }
     private var needsStopAttention: Bool {
         PilotTaskResultPresentation.needsStopAttention(phase: model.status.phase, detail: model.status.detail) ||
@@ -476,19 +497,22 @@ struct HomeView: View {
             if !model.prepared { captureProgress }
             if model.prepared || model.taskFlow.phase == .ready {
                 HStack(spacing: 12) {
-                    // Keep the picker and its presenting host alive through broadcast startup.
-                    BroadcastPicker().frame(width: 44, height: 44)
-                        .disabled(!model.prepared || model.stopping)
-                        .accessibilityFocused($broadcastFocused)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(captureState.title)
-                            .font(.title3.bold())
-                        Text(captureState == .ready ? "屏幕将共享给所选 AI" : captureState.detail)
-                            .font(.caption).foregroundStyle(.secondary)
+                    if captureState == .ready {
+                        Button {
+                            composerFocused = false
+                            broadcastPrompt.reopen(broadcastPromptInput)
+                        } label: {
+                            Label("开启屏幕共享", systemImage: "rectangle.on.rectangle")
+                                .font(.subheadline.weight(.medium)).frame(minHeight: 44)
+                        }.buttonStyle(.plain)
+                            .accessibilityIdentifier("chat.openScreenSharing")
+                    } else {
+                        Label(captureState.title, systemImage: captureState == .capturing ? "record.circle" : "rectangle.on.rectangle")
+                            .font(.subheadline).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
                     if model.prepared { primaryAction }
-                }.padding(.vertical, 4)
+                }
                 if model.prepared {
                     if #available(iOS 26.0, *), !reduceTransparency {
                         GlassEffectContainer(spacing: 12) { sessionAudioControls }
@@ -1192,7 +1216,7 @@ enum HomeCaptureState: Equatable {
     var detail: String {
         switch self {
         case .idle: return "发送目标后准备本次会话。"
-        case .preparing: return "准备完成后，点左侧圆形按钮。"
+        case .preparing: return "准备完成后，会提示开启屏幕共享。"
         case .ready: return "在系统窗口中开始直播。"
         case .waiting: return "画面连接后自动开始。"
         case .capturing: return "AI 正在帮你操作。"
@@ -1217,6 +1241,129 @@ enum HomeNoticePresentation {
                   [.opening, .opened].contains(scope.launch.phase), !scope.launch.isVisuallyEstablished else { return nil }
         }
         return notice
+    }
+}
+
+/// UI-only state. Closing or accepting the prompt never changes the command.
+struct HomeBroadcastPromptInput: Equatable {
+    var sessionID: String?
+    var prepared: Bool
+    var newTaskReady: Bool
+    var hasReceivedFrame: Bool
+    var otherPresentation: Bool
+}
+
+struct HomeBroadcastPromptState {
+    private var initialized = false
+    private var offeredSessionID: String?
+    private(set) var presentedSessionID: String?
+    var isPresented: Bool { presentedSessionID != nil }
+
+    mutating func observe(_ input: HomeBroadcastPromptInput) {
+        if !initialized {
+            // Restoring an old session never raises a new start prompt.
+            initialized = true
+            offeredSessionID = input.sessionID
+            return
+        }
+        guard let sessionID = input.sessionID, input.prepared else {
+            presentedSessionID = nil
+            return
+        }
+        if input.hasReceivedFrame {
+            offeredSessionID = sessionID
+            presentedSessionID = nil
+            return
+        }
+        if presentedSessionID != nil, presentedSessionID != sessionID {
+            presentedSessionID = nil
+        }
+        guard input.newTaskReady, !input.otherPresentation, offeredSessionID != sessionID else { return }
+        offeredSessionID = sessionID
+        presentedSessionID = sessionID
+    }
+
+    mutating func dismiss() { presentedSessionID = nil }
+
+    mutating func reopen(_ input: HomeBroadcastPromptInput) {
+        guard input.prepared, !input.hasReceivedFrame, !input.otherPresentation,
+              let sessionID = input.sessionID else { return }
+        offeredSessionID = sessionID
+        presentedSessionID = sessionID
+    }
+}
+
+/// A local prompt, with a real system picker. This stays in the hierarchy even
+/// when invisible so receiving the first frame cannot dismiss ReplayKit's host.
+private struct BroadcastStartPrompt: View {
+    let isPresented: Bool
+    let enabled: Bool
+    let onDismiss: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @AccessibilityFocusState private var pickerFocused: Bool
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(reduceTransparency ? 0.58 : 0.35)
+                .ignoresSafeArea().onTapGesture(perform: onDismiss)
+                .accessibilityHidden(true)
+            ScrollView {
+                VStack(spacing: 18) {
+                    Image(systemName: "rectangle.on.rectangle")
+                        .font(.system(size: 36, weight: .light))
+                        .foregroundStyle(PilotPalette.accent)
+                        .padding(.top, 4).accessibilityHidden(true)
+                    VStack(spacing: 10) {
+                        Text("开启屏幕共享")
+                            .font(.system(.title2, design: .rounded, weight: .semibold))
+                            .accessibilityAddTraits(.isHeader)
+                        Text("共享画面后，AI 会开始执行。")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    VStack(spacing: 12) {
+                        BroadcastPicker().frame(width: 64, height: 64)
+                            .background(PilotPalette.accent, in: Circle())
+                            .disabled(!enabled || !isPresented)
+                            .accessibilityFocused($pickerFocused)
+                        Text("点上方按钮 → 开始直播")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    Button("稍后", action: onDismiss)
+                        .font(.subheadline).foregroundStyle(.secondary)
+                        .frame(minWidth: 80, minHeight: 44)
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("chat.deferScreenSharing")
+                }
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity).padding(24)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(maxWidth: 360, maxHeight: dynamicTypeSize.isAccessibilitySize ? 650 : 390)
+            .modifier(BroadcastPromptSurface())
+            .padding(24)
+            .scaleEffect(isPresented || reduceMotion ? 1 : 0.96)
+        }
+        .opacity(isPresented ? 1 : 0)
+        .allowsHitTesting(isPresented)
+        .accessibilityHidden(!isPresented)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: isPresented)
+        .onChange(of: isPresented) { _, shown in pickerFocused = shown }
+    }
+}
+
+private struct BroadcastPromptSurface: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @ViewBuilder func body(content: Content) -> some View {
+        if reduceTransparency {
+            content.background(PilotPalette.sheet, in: RoundedRectangle(cornerRadius: 30))
+        } else if #available(iOS 26.0, *) {
+            content.glassEffect(.regular, in: .rect(cornerRadius: 30))
+        } else {
+            content.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 30))
+        }
     }
 }
 
@@ -1251,7 +1398,9 @@ private final class BroadcastPickerHostController: UIViewController {
         container.backgroundColor = .clear
         picker.preferredExtension = Bundle.main.bundleIdentifier.map { $0 + ".Broadcast" }
         picker.showsMicrophoneButton = false
-        picker.accessibilityLabel = "系统屏幕广播按钮"
+        picker.tintColor = .white
+        picker.accessibilityIdentifier = "chat.systemBroadcastPicker"
+        picker.accessibilityLabel = "开启系统屏幕共享"
         picker.accessibilityHint = "选择SightLatch Broadcast后，由系统确认开始屏幕广播"
         picker.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(picker)
